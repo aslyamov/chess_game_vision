@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Шахматный тренажёр: ищи шахи и взятия, затем делай лучший ход против Stockfish" />
+  <title>Chess Game Vision</title>
+
+  <!-- Noto Sans font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♞</text></svg>" />
+  <link rel="stylesheet" href="/src/input.css" />
+</head>
+<body>
+
+<!-- ==================== SETTINGS SCREEN ==================== -->
+<main id="settings-screen" class="screen screen--center">
+  <div class="card-wide">
+    <!-- Header -->
+    <div class="card-header">
+      <div class="logo-icon">♞</div>
+      <h1>Chess Game Vision</h1>
+      <p>Шахматный тренажёр с поиском угроз и игрой против Stockfish</p>
+    </div>
+
+    <!-- Fields -->
+    <div class="form-stack">
+
+      <div class="field-group">
+        <label class="field-label" for="student-name">👤 Имя ученика</label>
+        <input id="student-name" class="field-input" type="text" placeholder="Введите имя" />
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">
+          🤖 Сила Stockfish
+          <span id="sf-elo-display" class="badge-val">1500 Elo</span>
+        </label>
+        <input id="sf-elo" class="field-range" type="range" min="600" max="2800" step="100" value="1500" />
+        <div class="range-labels"><span>600</span><span>2800</span></div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">
+          ⏱ Таймер поиска
+          <span id="search-timer-display" class="badge-val">30 сек</span>
+        </label>
+        <input id="search-timer" class="field-range" type="range" min="5" max="120" step="5" value="30" />
+        <div class="range-labels"><span>5 сек</span><span>120 сек</span></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="field-group">
+          <label class="field-label" for="game-minutes">🕐 Время партии (мин)</label>
+          <input id="game-minutes" class="field-input" type="number" min="1" max="60" value="10" />
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="game-increment">⚡ Инкремент (сек)</label>
+          <input id="game-increment" class="field-input" type="number" min="0" max="60" value="0" />
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="formspree-url">📧 URL Formspree (для отчёта)</label>
+        <input id="formspree-url" class="field-input" type="url" placeholder="https://formspree.io/f/..." />
+      </div>
+
+      <label class="toggle-row">
+        <input id="show-counts" class="toggle" type="checkbox" checked />
+        <span>Показывать счётчики угроз</span>
+      </label>
+
+    </div>
+
+    <!-- Actions -->
+    <div class="form-actions">
+      <button id="btn-start" class="btn btn--primary btn--lg">
+        ▶ Начать тренировку
+      </button>
+      <button id="btn-resume" class="btn btn--ghost btn--lg hidden">
+        ↩ Продолжить партию
+      </button>
+    </div>
+  </div>
+</main>
+
+<!-- ==================== GAME SCREEN ==================== -->
+<div id="game-screen" class="screen hidden">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <button id="btn-menu" class="btn btn--ghost btn--sm">← Меню</button>
+    </div>
+    <div class="topbar-center">
+      <span id="phase-badge" class="phase-badge phase-badge--search">🔍 Поиск шахов и взятий</span>
+    </div>
+    <div class="topbar-right">
+      <span id="status-msg" class="status-msg">Загрузка…</span>
+    </div>
+  </header>
+
+  <!-- Main layout: board + sidebar -->
+  <div class="game-main">
+
+    <!-- ── Board column ── -->
+    <div class="board-col">
+
+      <!-- Opponent info (Stockfish) -->
+      <div class="player-bar player-bar--top">
+        <div class="player-info">
+          <span class="player-avatar">♚</span>
+          <span class="player-name">Stockfish</span>
+        </div>
+        <div id="clock-black" class="clock clock--inactive">10:00</div>
+      </div>
+
+      <!-- Board -->
+      <div id="board-wrap" class="board-wrap">
+        <div id="board" class="board"></div>
+      </div>
+
+      <!-- Player info -->
+      <div class="player-bar player-bar--bottom">
+        <div class="player-info">
+          <span class="player-avatar">♔</span>
+          <span class="player-name" id="player-name-display">Вы</span>
+        </div>
+        <div id="clock-white" class="clock clock--inactive">10:00</div>
+      </div>
+
+    </div>
+
+    <!-- ── Right Sidebar ── -->
+    <div class="sidebar">
+
+      <!-- Search timer card -->
+      <div id="search-timer-card" class="card">
+        <div class="card-title">
+          <span>⏱ Поиск угроз</span>
+          <button id="btn-skip-search" class="btn btn--primary btn--xs">Сделать ход →</button>
+        </div>
+        <div class="timer-ring-wrap">
+          <svg class="timer-ring" viewBox="0 0 120 120">
+            <circle class="ring-bg" cx="60" cy="60" r="50"/>
+            <circle id="ring-progress" class="ring-fill" cx="60" cy="60" r="50"
+              stroke-dasharray="314" stroke-dashoffset="0"/>
+          </svg>
+          <div id="ring-inner-text" class="ring-inner">:30</div>
+        </div>
+        <div id="search-timer-display-game" class="timer-text">:30</div>
+      </div>
+
+      <!-- Threat counters card -->
+      <div id="counters-card" class="card">
+        <div class="card-title">📋 Шахи и взятия</div>
+
+        <div class="counter-section">
+          <div class="counter-section-hdr counter-section-hdr--mine">♔ Ваши возможности</div>
+
+          <div class="counter-row">
+            <span class="counter-label">Шахи</span>
+            <span class="counter-val"><span id="found-myChecks">0</span>/<span id="total-myChecks">0</span></span>
+          </div>
+          <div class="counter-bar-wrap">
+            <div id="bar-myChecks" class="counter-bar counter-bar--mine"></div>
+          </div>
+
+          <div class="counter-row">
+            <span class="counter-label">Взятия</span>
+            <span class="counter-val"><span id="found-myCaptures">0</span>/<span id="total-myCaptures">0</span></span>
+          </div>
+          <div class="counter-bar-wrap">
+            <div id="bar-myCaptures" class="counter-bar counter-bar--mine"></div>
+          </div>
+        </div>
+
+        <div class="counter-section">
+          <div class="counter-section-hdr counter-section-hdr--opp">♚ Угрозы соперника</div>
+
+          <div class="counter-row">
+            <span class="counter-label">Шахи</span>
+            <span class="counter-val"><span id="found-oppChecks">0</span>/<span id="total-oppChecks">0</span></span>
+          </div>
+          <div class="counter-bar-wrap">
+            <div id="bar-oppChecks" class="counter-bar counter-bar--opp"></div>
+          </div>
+
+          <div class="counter-row">
+            <span class="counter-label">Взятия</span>
+            <span class="counter-val"><span id="found-oppCaptures">0</span>/<span id="total-oppCaptures">0</span></span>
+          </div>
+          <div class="counter-bar-wrap">
+            <div id="bar-oppCaptures" class="counter-bar counter-bar--opp"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Legend -->
+      <div class="card card--compact">
+        <div class="card-title">Обозначения</div>
+        <div class="legend">
+          <div class="legend-row"><span class="dot dot--green"></span>Угроза найдена</div>
+          <div class="legend-row"><span class="dot dot--red"></span>Не угроза</div>
+          <div class="legend-row"><span class="dot dot--yellow"></span>Ход Stockfish</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ==================== STATS MODAL ==================== -->
+<div id="stats-modal" class="modal-backdrop hidden">
+  <div class="modal">
+    <h2 class="modal-title">🏁 Партия завершена</h2>
+
+    <div id="stat-result-msg" class="result-msg"></div>
+
+    <div class="stats-grid">
+      <!-- Accuracy big -->
+      <div class="stat-block stat-block--accent span-full">
+        <div class="stat-block-label">Точность ходов</div>
+        <div id="stat-accuracy" class="stat-big text--success">—</div>
+        <div id="stat-accuracy-sub" class="stat-sub"></div>
+      </div>
+
+      <!-- Threats -->
+      <div class="stat-block">
+        <div class="stat-block-label text--mine">♔ Ваши угрозы</div>
+        <div class="stat-rows">
+          <div class="stat-row"><span>Шахи</span><strong id="stat-myChecks">—</strong></div>
+          <div class="stat-row"><span>Взятия</span><strong id="stat-myCaptures">—</strong></div>
+        </div>
+      </div>
+
+      <div class="stat-block">
+        <div class="stat-block-label text--opp">♚ Угрозы Stockfish</div>
+        <div class="stat-rows">
+          <div class="stat-row"><span>Шахи</span><strong id="stat-oppChecks">—</strong></div>
+          <div class="stat-row"><span>Взятия</span><strong id="stat-oppCaptures">—</strong></div>
+        </div>
+      </div>
+
+      <!-- Time -->
+      <div class="stat-block span-full">
+        <div class="stat-block-label">⏱ Время поиска</div>
+        <div class="stat-rows">
+          <div class="stat-row"><span>Суммарно</span><strong id="stat-total-time">—</strong></div>
+          <div class="stat-row"><span>В среднем</span><strong id="stat-avg-time">—</strong></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button id="btn-new-game" class="btn btn--primary btn--lg">▶ Новая партия</button>
+      <button id="btn-send-report" class="btn btn--ghost btn--lg">📧 Отправить тренеру</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" class="toast-container"></div>
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
