@@ -29,5 +29,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# Task and scratch files
+task.txt
+image.png
+
 # Antigravity CLI / agent artifacts
 .gemini
