@@ -148,32 +148,4 @@ function buildMap(moves: ThreatMove[]): Map<string, ThreatMove> {
   return map;
 }
 
-/**
- * Get all legal destinations for both colors (used by chessground dests).
- */
-export function getAllDests(fen: string): Map<string, string[]> {
-  const dests = new Map<string, string[]>();
 
-  const collectForColor = (f: string) => {
-    try {
-      const g = new Chess(f);
-      for (const m of g.moves({ verbose: true })) {
-        const list = dests.get(m.from);
-        if (list) {
-          list.push(m.to);
-        } else {
-          dests.set(m.from, [m.to]);
-        }
-      }
-    } catch { /* ignore */ }
-  };
-
-  collectForColor(fen);
-
-  const tokens = fen.split(' ');
-  tokens[1] = tokens[1] === 'w' ? 'b' : 'w';
-  tokens[3] = '-';
-  collectForColor(tokens.join(' '));
-
-  return dests;
-}

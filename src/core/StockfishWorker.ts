@@ -110,7 +110,7 @@ export class StockfishEngine {
     this._send(`setoption name Skill Level value ${cfg.skillLevel}`);
   }
 
-  setLevel(level: number): void {
+  private setLevel(level: number): void {
     this.currentLevel = level;
     if (this.ready) {
       this._applyLevel(level);
@@ -171,16 +171,10 @@ export class StockfishEngine {
     });
   }
 
-  /**
-   * Backward-compatible alias.
-   */
-  getBestMove(fen: string, thinkMs = 500): Promise<StockfishResult> {
-    return this.searchMove(fen, { movetimeMs: thinkMs });
-  }
-
   destroy(): void {
     this._cleanupPending(new Error('Stockfish destroyed'));
     this.worker?.terminate();
     this.worker = null;
+    this.ready = false;
   }
 }

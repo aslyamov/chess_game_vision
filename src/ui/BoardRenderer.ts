@@ -4,7 +4,8 @@
  */
 
 import type { DrawShape, CGColor } from '../types/index.js';
-import { getAllDests } from '../core/ThreatAnalyzer.js';
+import { Chess } from 'chess.js';
+import { getLegalDests } from '../core/ThreatAnalyzer.js';
 
 interface BoardConfig {
   orientation?: 'white' | 'black';
@@ -40,7 +41,7 @@ export class BoardRenderer {
       movable: {
         color: 'both',
         free: false,
-        dests: getAllDests('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'),
+        dests: getLegalDests(new Chess()),
         events: {
           after: (orig: string, dest: string) => {
             this.onMoveCallback(orig, dest);

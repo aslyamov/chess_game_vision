@@ -522,13 +522,8 @@ html, body {
   color: var(--base-content-strong);
 }
 
-.timer-text {
-  text-align: center;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  color: var(--base-content);
-  opacity: 0.7;
-}
+
+
 
 /* ── Threat Counters ──────────────────────────────────────── */
 .counter-section {
@@ -767,7 +762,7 @@ html, body {
 .toast--error   { background: rgba(248, 114, 114, 0.15); color: var(--error);   border-color: rgba(248, 114, 114, 0.35); }
 .toast--info    { background: rgba(58, 191, 248, 0.15);  color: var(--primary); border-color: rgba(58, 191, 248, 0.35); }
 
-/* ── Coordinates Styling (from Chess-Vision-Trainer) ──────── */
+/* ── Coordinates Styling (matching Chess-Vision-Trainer) ───── */
 .cg-wrap coords {
   pointer-events: none;
   -webkit-font-smoothing: antialiased;
@@ -784,7 +779,7 @@ html, body {
   flex-direction: column-reverse !important;
   justify-content: flex-start !important;
   align-items: flex-start !important;
-  width: 14px !important;
+  width: 12px !important;
   height: 100% !important;
   margin: 0 !important;
   padding: 0 !important;
@@ -810,7 +805,7 @@ html, body {
   justify-content: flex-start !important;
   align-items: flex-end !important;
   width: 100% !important;
-  height: 14px !important;
+  height: 12px !important;
   margin: 0 !important;
   padding: 0 !important;
   display: flex !important;
@@ -829,6 +824,7 @@ html, body {
   display: block !important;
 }
 
+/* Coordinate colors — alternate with board square colors (brown texture) */
 .orientation-white .ranks coord:nth-child(odd)  { color: #f0d9b5 !important; }
 .orientation-white .ranks coord:nth-child(2n)   { color: #946f51 !important; }
 .orientation-black .ranks coord:nth-child(odd)  { color: #946f51 !important; }
@@ -839,6 +835,20 @@ html, body {
 .orientation-black .files coord:nth-child(odd)  { color: #946f51 !important; }
 .orientation-black .files coord:nth-child(2n)   { color: #f0d9b5 !important; }
 
+/* Reverse direction for black orientation */
+.orientation-black coords.ranks,
+.cg-wrap.orientation-black coords.ranks {
+  flex-direction: column !important;
+  display: flex !important;
+}
+
+.orientation-black coords.files,
+.cg-wrap.orientation-black coords.files {
+  flex-direction: row-reverse !important;
+  display: flex !important;
+}
+
 /* Move highlights */
 .cg-wrap square.last-move { background-color: rgba(155, 199, 0, 0.42) !important; }
 .cg-wrap square.selected  { background-color: rgba(20, 85, 30, 0.5) !important; }
+
