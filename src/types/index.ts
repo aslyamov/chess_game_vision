@@ -121,6 +121,16 @@ export function createEmptyStats(): GameStats {
   };
 }
 
+// ── Missed Threats (for PGN subvariations) ────────────────────
+export interface MissedThreat {
+  san: string;         // SAN notation of the missed move
+  side: 'my' | 'opp';  // 'my' = student's own threat, 'opp' = opponent's threat
+  category: 'check' | 'capture';
+}
+
+/** Missed threats keyed by half-move index (0-based ply). */
+export type MissedThreatsMap = Map<number, MissedThreat[]>;
+
 // ── Stockfish ─────────────────────────────────────────────────
 export interface StockfishResult {
   bestMove: string;   // e.g. "e2e4"

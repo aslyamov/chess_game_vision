@@ -154,15 +154,44 @@ function readSettings(): GameSettings {
   };
 }
 
+let boardToastTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function showBoardToast(text = 'Ваш ход!', durationMs = 1800): void {
+  try {
+    const toast = $('board-toast');
+    toast.textContent = text;
+    toast.classList.add('is-visible');
+
+    if (boardToastTimeout) clearTimeout(boardToastTimeout);
+    boardToastTimeout = setTimeout(() => {
+      toast.classList.remove('is-visible');
+      boardToastTimeout = null;
+    }, durationMs);
+  } catch {
+    /* element not found */
+  }
+}
+
+function hideBoardToast(): void {
+  if (boardToastTimeout) {
+    clearTimeout(boardToastTimeout);
+    boardToastTimeout = null;
+  }
+  const toast = document.getElementById('board-toast');
+  toast?.classList.remove('is-visible');
+}
+
 // ── Navigation ────────────────────────────────────────────────
 
 function showScreen(name: 'settings' | 'game'): void {
+  hideBoardToast();
   settingsScreen.classList.toggle('hidden', name !== 'settings');
   gameScreen.classList.toggle('hidden', name !== 'game');
   statsModal.classList.add('hidden');
 }
 
 function goToSettings(): void {
+  hideBoardToast();
   gameLoop?.destroy();
   gameLoop = null;
   showScreen('settings');
@@ -217,6 +246,7 @@ function buildCallbacks(): GameLoopCallbacks {
       const isStudentTurn = !isSearch;
 
       if (isSearch) {
+        hideBoardToast();
         phaseBadge.className = 'phase-badge phase-badge--search';
         phaseBadge.textContent = '🔍 Поиск шахов и взятий';
         if (currentSettings.searchTimerSeconds > 0) {
@@ -226,6 +256,7 @@ function buildCallbacks(): GameLoopCallbacks {
         }
         boardRenderer?.setSearchMode(fen, dests);
       } else {
+        showBoardToast('Ваш ход!');
         phaseBadge.className = 'phase-badge phase-badge--move';
         phaseBadge.textContent = '♟ Ваш ход';
         btnSkipSearch.classList.add('hidden');
@@ -278,6 +309,7 @@ function buildCallbacks(): GameLoopCallbacks {
     },
 
     onGameOver(result) {
+      hideBoardToast();
       lastGameOver = result;
       showStatsModal(result);
     },
@@ -385,6 +417,8 @@ function initModalActions(): void {
           day: '2-digit', month: '2-digit', year: 'numeric',
           hour: '2-digit', minute: '2-digit',
         }),
+        missedThreats: lastGameOver.missedThreats,
+        studentColor: lastGameOver.studentColor,
       });
       showToast('✅ Отчёт успешно отправлен!', 'success');
     } catch (e: unknown) {

@@ -2,7 +2,7 @@
  * report-sender.ts — send game report to coach via Formspree.
  */
 
-import type { GameStats, GameSettings } from '../types/index.js';
+import type { GameStats, GameSettings, MissedThreatsMap, PlayerColor } from '../types/index.js';
 import { DEFAULT_FORMSPREE_ENDPOINT, getBotLevelConfig } from '../types/index.js';
 import { pct } from './format.js';
 
@@ -11,6 +11,110 @@ export interface ReportData {
   stats: GameStats;
   pgn: string;
   date: string;
+  missedThreats?: MissedThreatsMap;
+  studentColor?: PlayerColor;
+}
+
+/**
+ * Build PGN with RAV subvariations for missed threats.
+ *
+ * For missed 'my' threats (student alternatives): inserted as `(N. Move {comment})`
+ * For missed 'opp' threats (opponent threats):    inserted as `(N. -- N... Move {comment})`
+ *   where `--` is a null/pass move (ChessBase convention).
+ *
+ * @param basePgn  - raw PGN from chess.js (headers + movetext)
+ * @param missed   - map of ply→MissedThreat[] from GameLoop
+ */
+function buildPgnWithVariations(basePgn: string, missed: MissedThreatsMap): string {
+  if (missed.size === 0) return basePgn;
+
+  // Split PGN into headers block and movetext
+  const headerEndIdx = basePgn.lastIndexOf(']\n');
+  let headers = '';
+  let movetext = basePgn;
+  if (headerEndIdx >= 0) {
+    headers = basePgn.substring(0, headerEndIdx + 2);
+    movetext = basePgn.substring(headerEndIdx + 2).trim();
+  }
+
+  // Tokenize movetext: move numbers, moves, result
+  // Tokens: "1.", "e4", "e5", "2.", "Nf3", "Nc6", ..., "1-0"
+  const tokens = movetext.match(/\S+/g) || [];
+
+  // Build an ordered list of SAN moves (half-moves) from tokens
+  const sanMoves: string[] = [];
+  const resultTokens = new Set(['1-0', '0-1', '1/2-1/2', '*']);
+  for (const tok of tokens) {
+    if (tok.match(/^\d+\.+$/)) continue;  // skip move numbers like "1." or "1..."
+    if (resultTokens.has(tok)) continue;    // skip result
+    sanMoves.push(tok);
+  }
+
+  // Find result token
+  let result = '*';
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    if (resultTokens.has(tokens[i])) {
+      result = tokens[i];
+      break;
+    }
+  }
+
+  // Rebuild movetext with subvariations
+  const parts: string[] = [];
+
+  for (let ply = 0; ply < sanMoves.length; ply++) {
+    const fullMoveNum = Math.floor(ply / 2) + 1;
+    const isWhiteMove = ply % 2 === 0;
+    const missedAtPly = missed.get(ply);
+    const hasVariations = Boolean(missedAtPly && missedAtPly.length > 0);
+
+    // Insert subvariations for missed threats BEFORE this move
+    // (these are alternatives/threats for the position before this move was played)
+    if (hasVariations && missedAtPly) {
+      const myMissed = missedAtPly.filter(m => m.side === 'my');
+      const oppMissed = missedAtPly.filter(m => m.side === 'opp');
+
+      // Student's own missed threats — direct alternatives at this move number
+      for (const m of myMissed) {
+        const label = m.category === 'check' ? 'шах не найден' : 'взятие не найдено';
+        if (isWhiteMove) {
+          parts.push(`(${fullMoveNum}. ${m.san} {${label}})`);
+        } else {
+          parts.push(`(${fullMoveNum}... ${m.san} {${label}})`);
+        }
+      }
+
+      // Opponent's missed threats — null move for student, then opponent's move
+      for (const m of oppMissed) {
+        const label = m.category === 'check' ? 'шах соперника не найден' : 'взятие соперника не найдено';
+        if (isWhiteMove) {
+          // Student is white, passes (--), then black threatens
+          parts.push(`(${fullMoveNum}. -- ${fullMoveNum}... ${m.san} {${label}})`);
+        } else {
+          // Student is black, passes (--), then white threatens
+          const nextMoveNum = fullMoveNum + 1;
+          parts.push(`(${fullMoveNum}... -- ${nextMoveNum}. ${m.san} {${label}})`);
+        }
+      }
+    }
+
+    // Add move number prefix
+    if (isWhiteMove) {
+      parts.push(`${fullMoveNum}.`);
+    } else if (hasVariations) {
+      // If variations preceded Black's move, prefix with 'N...' for valid standard PGN
+      parts.push(`${fullMoveNum}...`);
+    }
+
+    // Add the actual move
+    parts.push(sanMoves[ply]);
+  }
+
+  // Append result
+  parts.push(result);
+
+  const annotatedMovetext = parts.join(' ');
+  return headers ? `${headers}\n\n${annotatedMovetext}` : annotatedMovetext;
 }
 
 function buildEmailBody(data: ReportData): string {
@@ -23,6 +127,11 @@ function buildEmailBody(data: ReportData): string {
   const accuracy = stats.totalMoves > 0
     ? `${(stats.accuracySum / stats.totalMoves).toFixed(1)}%`
     : '—';
+
+  // Build PGN with missed-threat subvariations when available
+  const pgn = (data.missedThreats && data.missedThreats.size > 0)
+    ? buildPgnWithVariations(data.pgn, data.missedThreats)
+    : data.pgn;
 
   return `
 === ОТЧЕТ ТРЕНАЖЁРА ===
@@ -46,7 +155,7 @@ function buildEmailBody(data: ReportData): string {
 Среднее время поиска за ход: ${avgSearch} сек
 
 --- PGN ---
-${data.pgn}
+${pgn}
 `.trim();
 }
 

@@ -13,7 +13,7 @@
  */
 
 import { Chess } from 'chess.js';
-import type { GameSettings, GameState, Phase, ThreatResult, ThreatMove, GameStats, PlayerColor } from '../types/index.js';
+import type { GameSettings, GameState, Phase, ThreatResult, ThreatMove, GameStats, PlayerColor, MissedThreat, MissedThreatsMap } from '../types/index.js';
 import { getBotLevelConfig } from '../types/index.js';
 import { analyzeThreatsFull, getMoveKey, getLegalDests } from './ThreatAnalyzer.js';
 import { StatsCollector, cpToWinPercent, calculateMoveAccuracy } from './StatsCollector.js';
@@ -54,6 +54,7 @@ export interface GameOverResult {
   studentColor: PlayerColor;
   stats: GameStats;
   pgn: string;
+  missedThreats: MissedThreatsMap;
 }
 
 class Ticker {
@@ -75,6 +76,7 @@ export class GameLoop {
   private found: FoundSet = this._emptyFound();
   private totals: ThreatTotals = { myChecks: 0, myCaptures: 0, oppChecks: 0, oppCaptures: 0 };
   private cachedDests: Map<string, string[]> = new Map();
+  private missedThreatsMap: MissedThreatsMap = new Map();
 
   private searchRemaining = 0;
   private whiteMs = 0;
@@ -105,7 +107,7 @@ export class GameLoop {
     this.whiteMs = this.settings.gameTimeMinutes * 60 * 1000;
     this.blackMs = this.settings.gameTimeMinutes * 60 * 1000;
     persistence.clearGameState();
-
+    this.missedThreatsMap = new Map();
     this.cb.onGameInit?.(this.studentColor);
     this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
 
@@ -353,6 +355,10 @@ export class GameLoop {
 
     this.searchTicker.stop();
     if (this.transitionTimer) clearTimeout(this.transitionTimer);
+
+    // ── Collect missed threats for this position ──
+    this._collectMissedThreats();
+
     this.phase = 'move';
 
     const fen = this.game.fen();
@@ -482,6 +488,46 @@ export class GameLoop {
     );
   }
 
+  /**
+   * Record unfound threats for the current position (before the player makes a move).
+   * Key = current half-move index (number of moves already played).
+   */
+  private _collectMissedThreats(): void {
+    if (!this.threats) return;
+
+    const ply = this.game.history().length; // half-moves already played
+    const missed: MissedThreat[] = [];
+
+    // Student's own checks not found
+    for (const [key, move] of this.threats.myChecksMap) {
+      if (!this.found.myChecks.has(key)) {
+        missed.push({ san: move.san, side: 'my', category: 'check' });
+      }
+    }
+    // Student's own captures not found
+    for (const [key, move] of this.threats.myCapturesMap) {
+      if (!this.found.myCaptures.has(key)) {
+        missed.push({ san: move.san, side: 'my', category: 'capture' });
+      }
+    }
+    // Opponent checks not found
+    for (const [key, move] of this.threats.oppChecksMap) {
+      if (!this.found.oppChecks.has(key)) {
+        missed.push({ san: move.san, side: 'opp', category: 'check' });
+      }
+    }
+    // Opponent captures not found
+    for (const [key, move] of this.threats.oppCapturesMap) {
+      if (!this.found.oppCaptures.has(key)) {
+        missed.push({ san: move.san, side: 'opp', category: 'capture' });
+      }
+    }
+
+    if (missed.length > 0) {
+      this.missedThreatsMap.set(ply, missed);
+    }
+  }
+
   private _checkGameOver(): boolean {
     if (this.game.isCheckmate()) {
       const loser = this.game.turn();
@@ -541,7 +587,8 @@ export class GameLoop {
       winner,
       studentColor: this.studentColor,
       stats: this.statsCollector.getStats(),
-      pgn: this.game.pgn()
+      pgn: this.game.pgn(),
+      missedThreats: this.missedThreatsMap,
     });
   }
 

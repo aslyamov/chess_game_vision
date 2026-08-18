@@ -441,6 +441,50 @@ html, body {
   height: 100% !important;
 }
 
+/* ── On-Board Turn Announcement ("Ваш ход!") ─────────────── */
+.board-toast {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.88);
+  z-index: 30;
+  pointer-events: none;
+  user-select: none;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #ffffff;
+  border: 1.5px solid rgba(56, 189, 248, 0.4);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(56, 189, 248, 0.25);
+  padding: 0.8rem 1.8rem;
+  border-radius: 9999px;
+  font-weight: 800;
+  font-size: 1.35rem;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+              visibility 0.25s;
+}
+
+.board-toast.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+@media (max-width: 640px) {
+  .board-toast {
+    font-size: 1.1rem;
+    padding: 0.65rem 1.4rem;
+  }
+}
+
 /* ── Sidebar Column ───────────────────────────────────────── */
 .sidebar {
   display: flex;
