@@ -5,7 +5,7 @@
 
 import { Chessground } from 'chessground';
 import type { GameSettings, PlayerColor } from './types/index.js';
-import { DEFAULT_FORMSPREE_ENDPOINT } from './types/index.js';
+import { DEFAULT_FORMSPREE_ENDPOINT, getBotLevelConfig } from './types/index.js';
 import {
   GameLoop,
   type GameLoopCallbacks,
@@ -33,8 +33,8 @@ const gameScreen      = $('game-screen');
 const statsModal      = $('stats-modal');
 
 const inpName         = $<HTMLInputElement>('student-name');
-const inpElo          = $<HTMLInputElement>('sf-elo');
-const inpEloDisp      = $('sf-elo-display');
+const inpLevel        = $<HTMLInputElement>('sf-level');
+const inpLevelDisp    = $('sf-level-display');
 const inpSearchTimer  = $<HTMLInputElement>('search-timer');
 const inpSearchDisp   = $('search-timer-display');
 const inpMinutes      = $<HTMLInputElement>('game-minutes');
@@ -48,8 +48,8 @@ const btnSkipSearch   = $('btn-skip-search');
 
 const phaseBadge      = $('phase-badge');
 const statusMsg       = $('status-msg');
-const clockWhite      = $('clock-white');
-const clockBlack      = $('clock-black');
+const clockPlayer     = $('clock-player');
+const clockOpp        = $('clock-opp');
 const boardEl         = $('board');
 const playerNameDisp  = $('player-name-display');
 const oppNameDisp     = $('opp-name-display');
@@ -63,7 +63,6 @@ const statHdrOpp      = $('stat-hdr-opp');
 
 const ringProgress    = document.querySelector<SVGCircleElement>('#ring-progress')!;
 const ringInnerText   = $('ring-inner-text');
-const searchTimerDisp = $('search-timer-display-game');
 const countersCard    = $('counters-card');
 
 const btnSendReport   = $('btn-send-report');
@@ -78,18 +77,19 @@ let lastGameOver: GameOverResult | null = null;
 let searchTimerTotal = 0;
 
 function renderSearchTimer(remainingMs: number, totalMs: number): void {
-  const label = formatSearchTime(remainingMs);
+  const isInfinite = currentSettings.searchTimerSeconds === 0;
+  const label = isInfinite ? '∞' : formatSearchTime(remainingMs);
 
-  searchTimerDisp.textContent = label;
-  ringInnerText.textContent   = label;
+  ringInnerText.textContent = label;
 
-  const fraction = totalMs > 0 ? Math.max(0, Math.min(1, remainingMs / totalMs)) : 1;
+  const fraction = (!isInfinite && totalMs > 0) ? Math.max(0, Math.min(1, remainingMs / totalMs)) : 1;
   const circumference = 314;
   ringProgress.style.strokeDashoffset = String(circumference * (1 - fraction));
-  ringProgress.style.stroke =
-    remainingMs < 10_000 ? '#f87272' :
-    remainingMs < 20_000 ? '#fbbd23' :
-                           '#3abff8';
+  ringProgress.style.stroke = isInfinite
+    ? '#3abff8'
+    : (remainingMs < 10_000 ? '#f87272' :
+       remainingMs < 20_000 ? '#fbbd23' :
+                              '#3abff8');
 }
 
 function updateColorTheme(studentColor: PlayerColor): void {
@@ -107,10 +107,13 @@ function updateColorTheme(studentColor: PlayerColor): void {
 
 function initSettingsScreen(): void {
   inpName.value          = currentSettings.studentName;
-  inpElo.value           = String(currentSettings.stockfishElo);
-  inpEloDisp.textContent = `${currentSettings.stockfishElo} Elo`;
+  inpLevel.value         = String(currentSettings.stockfishLevel);
+  const botCfg           = getBotLevelConfig(currentSettings.stockfishLevel);
+  inpLevelDisp.textContent = `${botCfg.name} (~${botCfg.approxElo})`;
   inpSearchTimer.value   = String(currentSettings.searchTimerSeconds);
-  inpSearchDisp.textContent = `${currentSettings.searchTimerSeconds} сек`;
+  inpSearchDisp.textContent = currentSettings.searchTimerSeconds === 0
+    ? '0 сек (до всех угроз)'
+    : `${currentSettings.searchTimerSeconds} сек`;
   inpMinutes.value       = String(currentSettings.gameTimeMinutes);
   inpIncrement.value     = String(currentSettings.incrementSeconds);
   inpShowCounts.checked  = currentSettings.showTargetCounts;
@@ -118,12 +121,14 @@ function initSettingsScreen(): void {
 
   renderSearchTimer(currentSettings.searchTimerSeconds * 1000, currentSettings.searchTimerSeconds * 1000);
 
-  inpElo.addEventListener('input', () => {
-    inpEloDisp.textContent = `${inpElo.value} Elo`;
+  inpLevel.addEventListener('input', () => {
+    const lvl = parseInt(inpLevel.value, 10) || 3;
+    const cfg = getBotLevelConfig(lvl);
+    inpLevelDisp.textContent = `${cfg.name} (~${cfg.approxElo})`;
   });
   inpSearchTimer.addEventListener('input', () => {
-    const val = parseInt(inpSearchTimer.value, 10) || 30;
-    inpSearchDisp.textContent = `${val} сек`;
+    const val = parseInt(inpSearchTimer.value, 10) || 0;
+    inpSearchDisp.textContent = val === 0 ? '0 сек (до всех угроз)' : `${val} сек`;
     renderSearchTimer(val * 1000, val * 1000);
   });
 
@@ -140,7 +145,7 @@ function initSettingsScreen(): void {
 function readSettings(): GameSettings {
   return {
     studentName:        inpName.value.trim() || 'Ученик',
-    stockfishElo:       parseInt(inpElo.value, 10),
+    stockfishLevel:     parseInt(inpLevel.value, 10) || 3,
     searchTimerSeconds: parseInt(inpSearchTimer.value, 10),
     showTargetCounts:   inpShowCounts.checked,
     gameTimeMinutes:    parseInt(inpMinutes.value, 10) || 10,
@@ -172,8 +177,9 @@ function startGame(resume: boolean): void {
   searchTimerTotal = currentSettings.searchTimerSeconds * 1000;
   renderSearchTimer(searchTimerTotal, searchTimerTotal);
 
+  const botCfg = getBotLevelConfig(currentSettings.stockfishLevel);
   playerNameDisp.textContent = currentSettings.studentName || 'Вы';
-  oppNameDisp.textContent    = `Stockfish (${currentSettings.stockfishElo})`;
+  oppNameDisp.textContent    = `Stockfish (${botCfg.name})`;
   countersCard.classList.toggle('hidden', !currentSettings.showTargetCounts);
 
   showScreen('game');
@@ -208,13 +214,16 @@ function buildCallbacks(): GameLoopCallbacks {
 
     onPhaseChange(phase, fen, dests) {
       const isSearch = phase === 'search';
-      const studentColor = gameLoop?.getStudentColor() ?? 'w';
       const isStudentTurn = !isSearch;
 
       if (isSearch) {
         phaseBadge.className = 'phase-badge phase-badge--search';
         phaseBadge.textContent = '🔍 Поиск шахов и взятий';
-        btnSkipSearch.classList.remove('hidden');
+        if (currentSettings.searchTimerSeconds > 0) {
+          btnSkipSearch.classList.remove('hidden');
+        } else {
+          btnSkipSearch.classList.add('hidden');
+        }
         boardRenderer?.setSearchMode(fen, dests);
       } else {
         phaseBadge.className = 'phase-badge phase-badge--move';
@@ -223,17 +232,10 @@ function buildCallbacks(): GameLoopCallbacks {
         boardRenderer?.setMoveMode(fen, dests);
       }
 
-      if (studentColor === 'w') {
-        clockWhite.classList.toggle('clock--active',   isStudentTurn);
-        clockWhite.classList.toggle('clock--inactive', !isStudentTurn);
-        clockBlack.classList.remove('clock--active');
-        clockBlack.classList.add('clock--inactive');
-      } else {
-        clockBlack.classList.toggle('clock--active',   isStudentTurn);
-        clockBlack.classList.toggle('clock--inactive', !isStudentTurn);
-        clockWhite.classList.remove('clock--active');
-        clockWhite.classList.add('clock--inactive');
-      }
+      clockPlayer.classList.toggle('clock--active',   isStudentTurn);
+      clockPlayer.classList.toggle('clock--inactive', !isStudentTurn);
+      clockOpp.classList.remove('clock--active');
+      clockOpp.classList.add('clock--inactive');
     },
 
     onSearchTimerTick(remainingMs) {
@@ -241,10 +243,14 @@ function buildCallbacks(): GameLoopCallbacks {
     },
 
     onGameTimerTick(whiteMs, blackMs) {
-      clockWhite.textContent = formatTime(whiteMs);
-      clockBlack.textContent = formatTime(blackMs);
-      clockWhite.classList.toggle('clock--low', whiteMs < 30_000);
-      clockBlack.classList.toggle('clock--low', blackMs < 30_000);
+      const studentColor = gameLoop?.getStudentColor() ?? 'w';
+      const playerMs = studentColor === 'w' ? whiteMs : blackMs;
+      const oppMs    = studentColor === 'w' ? blackMs : whiteMs;
+
+      clockPlayer.textContent = formatTime(playerMs);
+      clockOpp.textContent    = formatTime(oppMs);
+      clockPlayer.classList.toggle('clock--low', playerMs < 30_000);
+      clockOpp.classList.toggle('clock--low', oppMs < 30_000);
     },
 
     onThreatFeedback(orig, dest, correct) {

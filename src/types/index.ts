@@ -27,10 +27,36 @@ export interface ThreatResult {
   oppCapturesMap: Map<string, ThreatMove>;
 }
 
+// ── Bot Levels (Lichess-style) ──────────────────────────────
+export interface BotLevelConfig {
+  level: number;
+  name: string;
+  approxElo: number;
+  skillLevel: number;
+  depth: number;
+  movetimeMs: number;
+}
+
+export const BOT_LEVELS: Record<number, BotLevelConfig> = {
+  1: { level: 1, name: 'Уровень 1', approxElo: 800,  skillLevel: 0,  depth: 1,  movetimeMs: 50 },
+  2: { level: 2, name: 'Уровень 2', approxElo: 1100, skillLevel: 3,  depth: 2,  movetimeMs: 100 },
+  3: { level: 3, name: 'Уровень 3', approxElo: 1400, skillLevel: 6,  depth: 3,  movetimeMs: 150 },
+  4: { level: 4, name: 'Уровень 4', approxElo: 1700, skillLevel: 8,  depth: 4,  movetimeMs: 200 },
+  5: { level: 5, name: 'Уровень 5', approxElo: 2000, skillLevel: 11, depth: 6,  movetimeMs: 300 },
+  6: { level: 6, name: 'Уровень 6', approxElo: 2300, skillLevel: 14, depth: 8,  movetimeMs: 400 },
+  7: { level: 7, name: 'Уровень 7', approxElo: 2500, skillLevel: 17, depth: 10, movetimeMs: 500 },
+  8: { level: 8, name: 'Уровень 8', approxElo: 2800, skillLevel: 20, depth: 15, movetimeMs: 1000 },
+};
+
+export function getBotLevelConfig(level: number): BotLevelConfig {
+  const rounded = Math.max(1, Math.min(8, Math.round(level) || 3));
+  return BOT_LEVELS[rounded] || BOT_LEVELS[3];
+}
+
 // ── Settings ─────────────────────────────────────────────────
 export interface GameSettings {
   studentName: string;
-  stockfishElo: number;           // 1000–2500
+  stockfishLevel: number;         // 1–8
   searchTimerSeconds: number;     // seconds for Phase A
   showTargetCounts: boolean;      // show hint counters
   gameTimeMinutes: number;        // total game time (each side)
@@ -40,7 +66,7 @@ export interface GameSettings {
 
 export const DEFAULT_SETTINGS: GameSettings = {
   studentName: '',
-  stockfishElo: 1500,
+  stockfishLevel: 3,
   searchTimerSeconds: 30,
   showTargetCounts: true,
   gameTimeMinutes: 10,

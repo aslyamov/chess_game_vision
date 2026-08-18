@@ -3,7 +3,7 @@
  */
 
 import type { GameStats, GameSettings } from '../types/index.js';
-import { DEFAULT_FORMSPREE_ENDPOINT } from '../types/index.js';
+import { DEFAULT_FORMSPREE_ENDPOINT, getBotLevelConfig } from '../types/index.js';
 import { pct } from './format.js';
 
 export interface ReportData {
@@ -15,6 +15,7 @@ export interface ReportData {
 
 function buildEmailBody(data: ReportData): string {
   const { settings, stats, date } = data;
+  const botConfig = getBotLevelConfig(settings.stockfishLevel);
   const avgSearch = stats.searchPhaseCount > 0
     ? (stats.totalSearchTimeMs / stats.searchPhaseCount / 1000).toFixed(1)
     : '—';
@@ -27,7 +28,7 @@ function buildEmailBody(data: ReportData): string {
 === ОТЧЕТ ТРЕНАЖЁРА ===
 Ученик: ${settings.studentName || '(не указан)'}
 Дата: ${date}
-Сила Stockfish: ${settings.stockfishElo} Elo
+Сила Stockfish: ${botConfig.name} (~${botConfig.approxElo})
 
 --- ПОИСК ЗА СЕБЯ ---
 Мои шахи:     ${pct(stats.myChecks.found,    stats.myChecks.total)}

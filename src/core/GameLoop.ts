@@ -13,8 +13,9 @@
  */
 
 import { Chess } from 'chess.js';
-import type { GameSettings, GameState, Phase, ThreatResult, GameStats, PlayerColor } from '../types/index.js';
-import { analyzeThreatsFull, getMoveKey } from './ThreatAnalyzer.js';
+import type { GameSettings, GameState, Phase, ThreatResult, ThreatMove, GameStats, PlayerColor } from '../types/index.js';
+import { getBotLevelConfig } from '../types/index.js';
+import { analyzeThreatsFull, getMoveKey, getLegalDests } from './ThreatAnalyzer.js';
 import { StatsCollector, cpToWinPercent, calculateMoveAccuracy } from './StatsCollector.js';
 import { StockfishEngine } from './StockfishWorker.js';
 import { persistence } from './PersistenceManager.js';
@@ -165,6 +166,10 @@ export class GameLoop {
     if (this.isGameOver || this.isBusy) return;
 
     if (this.phase === 'search') {
+      if (this.settings.searchTimerSeconds === 0 && !this._allFound()) {
+        this.cb.onStatusMessage('Нужно найти все шахи и взятия!', 'warn');
+        return;
+      }
       this.searchTicker.stop();
       if (this.transitionTimer) clearTimeout(this.transitionTimer);
       this.statsCollector.endSearchPhase();
@@ -187,6 +192,27 @@ export class GameLoop {
     this.engine.destroy();
   }
 
+  // ── Stockfish Move Helper ────────────────────────────────────
+
+  private _applyStockfishMove(bestMove: string): { from: string; to: string } | null {
+    if (!bestMove || bestMove === '(none)') {
+      this._endGame('stalemate');
+      return null;
+    }
+
+    const from = bestMove.substring(0, 2);
+    const to = bestMove.substring(2, 4);
+    const promotion = bestMove.substring(4) || undefined;
+
+    try {
+      this.game.move({ from, to, promotion });
+      return { from, to };
+    } catch {
+      this._endGame('stalemate');
+      return null;
+    }
+  }
+
   // ── Opening Move when Student plays Black ────────────────────
 
   private async _stockfishOpeningMove(): Promise<void> {
@@ -194,32 +220,16 @@ export class GameLoop {
     this.cb.onStatusMessage('Stockfish делает первый ход (1. e4)…', 'info');
 
     try {
-      const thinkMs = Math.min(1500, Math.max(200, this.settings.stockfishElo / 3));
-      const result = await this.engine.getBestMove(this.game.fen(), thinkMs);
-
-      if (!result.bestMove || result.bestMove === '(none)') {
-        this._endGame('stalemate');
-        return;
-      }
-
-      const sfFrom = result.bestMove.substring(0, 2);
-      const sfTo   = result.bestMove.substring(2, 4);
-      const sfProm = result.bestMove.substring(4) || undefined;
-
-      try {
-        this.game.move({ from: sfFrom, to: sfTo, promotion: sfProm });
-      } catch {
-        this._endGame('stalemate');
-        return;
-      }
+      const result = await this.engine.getBotMove(this.game.fen());
+      const move = this._applyStockfishMove(result.bestMove);
+      if (!move) return;
 
       this.whiteMs += this.settings.incrementSeconds * 1000;
 
       const newFen = this.game.fen();
-      const threatAnalysis = analyzeThreatsFull(newFen, this.studentColor);
-      this.cachedDests = threatAnalysis.dests;
+      this.cachedDests = getLegalDests(this.game);
 
-      this.cb.onStockfishMove({ from: sfFrom, to: sfTo, fen: newFen, dests: this.cachedDests });
+      this.cb.onStockfishMove({ from: move.from, to: move.to, fen: newFen, dests: this.cachedDests });
       this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
 
       this._save();
@@ -278,20 +288,22 @@ export class GameLoop {
 
     this.cb.onStatusMessage(`Найдите шахи и взятия (${totalThreats})`, 'info');
 
-    let lastTick = Date.now();
-    this.searchTicker.start(() => {
-      const now = Date.now();
-      const delta = now - lastTick;
-      lastTick = now;
+    if (this.settings.searchTimerSeconds > 0) {
+      let lastTick = Date.now();
+      this.searchTicker.start(() => {
+        const now = Date.now();
+        const delta = now - lastTick;
+        lastTick = now;
 
-      this.searchRemaining = Math.max(0, this.searchRemaining - delta);
-      this.cb.onSearchTimerTick(this.searchRemaining);
-      if (this.searchRemaining <= 0) {
-        this.searchTicker.stop();
-        this.statsCollector.endSearchPhase();
-        this._enterPhaseB();
-      }
-    }, 150);
+        this.searchRemaining = Math.max(0, this.searchRemaining - delta);
+        this.cb.onSearchTimerTick(this.searchRemaining);
+        if (this.searchRemaining <= 0) {
+          this.searchTicker.stop();
+          this.statsCollector.endSearchPhase();
+          this._enterPhaseB();
+        }
+      }, 150);
+    }
 
     this._save();
   }
@@ -301,25 +313,23 @@ export class GameLoop {
     const key = getMoveKey(orig, dest);
     let found = false;
 
-    if (this.threats.myChecksMap.has(key) && !this.found.myChecks.has(key)) {
-      this.found.myChecks.add(key);
-      this.statsCollector.recordMyCheckFound();
-      found = true;
-    }
-    if (this.threats.myCapturesMap.has(key) && !this.found.myCaptures.has(key)) {
-      this.found.myCaptures.add(key);
-      this.statsCollector.recordMyCaptureFound();
-      found = true;
-    }
-    if (this.threats.oppChecksMap.has(key) && !this.found.oppChecks.has(key)) {
-      this.found.oppChecks.add(key);
-      this.statsCollector.recordOppCheckFound();
-      found = true;
-    }
-    if (this.threats.oppCapturesMap.has(key) && !this.found.oppCaptures.has(key)) {
-      this.found.oppCaptures.add(key);
-      this.statsCollector.recordOppCaptureFound();
-      found = true;
+    const categories: Array<{
+      map: Map<string, ThreatMove>;
+      foundSet: Set<string>;
+      recordFn: () => void;
+    }> = [
+      { map: this.threats.myChecksMap,    foundSet: this.found.myChecks,    recordFn: () => this.statsCollector.recordMyCheckFound() },
+      { map: this.threats.myCapturesMap,  foundSet: this.found.myCaptures,  recordFn: () => this.statsCollector.recordMyCaptureFound() },
+      { map: this.threats.oppChecksMap,   foundSet: this.found.oppChecks,   recordFn: () => this.statsCollector.recordOppCheckFound() },
+      { map: this.threats.oppCapturesMap, foundSet: this.found.oppCaptures, recordFn: () => this.statsCollector.recordOppCaptureFound() },
+    ];
+
+    for (const cat of categories) {
+      if (cat.map.has(key) && !cat.foundSet.has(key)) {
+        cat.foundSet.add(key);
+        cat.recordFn();
+        found = true;
+      }
     }
 
     this.cb.onThreatFeedback(orig, dest, found);
@@ -346,8 +356,7 @@ export class GameLoop {
     this.phase = 'move';
 
     const fen = this.game.fen();
-    const threatAnalysis = analyzeThreatsFull(fen, this.studentColor);
-    this.cachedDests = threatAnalysis.dests;
+    this.cachedDests = getLegalDests(this.game);
 
     this.cb.onPhaseChange('move', fen, this.cachedDests);
     this.cb.onStatusMessage('Ваш ход', 'info');
@@ -400,7 +409,7 @@ export class GameLoop {
       let winBefore = 50;
       let isBestMove = false;
       try {
-        const evalRes = await this.engine.getBestMove(fenBeforePlayer, 250);
+        const evalRes = await this.engine.getEvaluation(fenBeforePlayer, 250);
         winBefore = cpToWinPercent(evalRes.score);
         const sfBestMove = evalRes.bestMove.replace(/(..)(..).*/, '$1$2').toLowerCase();
         const playerUci = `${orig}${dest}`.toLowerCase();
@@ -426,8 +435,7 @@ export class GameLoop {
       this.cb.onStatusMessage('Stockfish думает…', 'info');
 
       // 2. Get Stockfish's response move for the new position
-      const thinkMs = Math.min(1500, Math.max(200, this.settings.stockfishElo / 3));
-      const result = await this.engine.getBestMove(this.game.fen(), thinkMs);
+      const result = await this.engine.getBotMove(this.game.fen());
 
       // Score from side-to-move (Stockfish) -> negate for student's perspective
       const studentScoreAfter = -result.score;
@@ -435,21 +443,8 @@ export class GameLoop {
       const moveAccuracy = isBestMove ? 100 : calculateMoveAccuracy(winBefore, winAfter);
       this.statsCollector.recordPlayerMove(moveAccuracy, isBestMove);
 
-      if (!result.bestMove || result.bestMove === '(none)') {
-        this._endGame('stalemate');
-        return;
-      }
-
-      const sfFrom = result.bestMove.substring(0, 2);
-      const sfTo   = result.bestMove.substring(2, 4);
-      const sfProm = result.bestMove.substring(4) || undefined;
-
-      try {
-        this.game.move({ from: sfFrom, to: sfTo, promotion: sfProm });
-      } catch {
-        this._endGame('stalemate');
-        return;
-      }
+      const move = this._applyStockfishMove(result.bestMove);
+      if (!move) return;
 
       // Add increment to Stockfish's clock
       if (this.studentColor === 'w') {
@@ -460,10 +455,9 @@ export class GameLoop {
       this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
 
       const newFen = this.game.fen();
-      const threatAnalysis = analyzeThreatsFull(newFen, this.studentColor);
-      this.cachedDests = threatAnalysis.dests;
+      this.cachedDests = getLegalDests(this.game);
 
-      this.cb.onStockfishMove({ from: sfFrom, to: sfTo, fen: newFen, dests: this.cachedDests });
+      this.cb.onStockfishMove({ from: move.from, to: move.to, fen: newFen, dests: this.cachedDests });
 
       if (this._checkGameOver()) return;
 
@@ -517,13 +511,16 @@ export class GameLoop {
     else if (winner === 'black') resultStr = '0-1';
     else if (winner === 'draw') resultStr = '1/2-1/2';
 
+    const botConfig = getBotLevelConfig(this.settings.stockfishLevel);
+    const botLabel = `Stockfish (${botConfig.name} - ~${botConfig.approxElo})`;
+
     const whitePlayer = this.studentColor === 'w'
       ? (this.settings.studentName || 'Ученик')
-      : `Stockfish (${this.settings.stockfishElo} Elo)`;
+      : botLabel;
 
     const blackPlayer = this.studentColor === 'b'
       ? (this.settings.studentName || 'Ученик')
-      : `Stockfish (${this.settings.stockfishElo} Elo)`;
+      : botLabel;
 
     try {
       this.game.header(

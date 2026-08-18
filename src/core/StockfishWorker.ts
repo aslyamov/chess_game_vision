@@ -4,6 +4,7 @@
  */
 
 import type { GameSettings, StockfishResult } from '../types/index.js';
+import { getBotLevelConfig } from '../types/index.js';
 
 export class StockfishEngine {
   private worker: Worker | null = null;
@@ -11,7 +12,7 @@ export class StockfishEngine {
   private pendingResolve: ((r: StockfishResult) => void) | null = null;
   private pendingReject: ((e: Error) => void) | null = null;
   private pendingTimeout: ReturnType<typeof setTimeout> | null = null;
-  private currentElo = 1500;
+  private currentLevel = 3;
   private lastScoreCp = 0;
 
   constructor() {
@@ -70,7 +71,7 @@ export class StockfishEngine {
   private _onMessage(data: string): void {
     if (data === 'uciok') {
       this.ready = true;
-      this._applyElo(this.currentElo);
+      this._applyLevel(this.currentLevel);
       this._send('isready');
       return;
     }
@@ -103,27 +104,42 @@ export class StockfishEngine {
     }
   }
 
-  private _applyElo(elo: number): void {
-    this._send('setoption name UCI_LimitStrength value true');
-    this._send(`setoption name UCI_Elo value ${elo}`);
+  private _applyLevel(level: number): void {
+    const cfg = getBotLevelConfig(level);
+    this._send('setoption name UCI_LimitStrength value false');
+    this._send(`setoption name Skill Level value ${cfg.skillLevel}`);
   }
 
-  setElo(elo: number): void {
-    this.currentElo = elo;
+  setLevel(level: number): void {
+    this.currentLevel = level;
     if (this.ready) {
-      this._applyElo(elo);
+      this._applyLevel(level);
     }
   }
 
   applySettings(settings: GameSettings): void {
-    this.setElo(settings.stockfishElo);
+    this.setLevel(settings.stockfishLevel);
   }
 
   /**
-   * Ask Stockfish for best move and evaluation in given position.
-   * Returns a Promise that resolves with bestMove and score (cp).
+   * Request bot move using configured level (skill level, depth, movetime).
    */
-  getBestMove(fen: string, thinkMs = 500): Promise<StockfishResult> {
+  getBotMove(fen: string): Promise<StockfishResult> {
+    const cfg = getBotLevelConfig(this.currentLevel);
+    return this.searchMove(fen, { depth: cfg.depth, movetimeMs: cfg.movetimeMs });
+  }
+
+  /**
+   * Request evaluation for player accuracy analysis.
+   */
+  getEvaluation(fen: string, thinkMs = 250): Promise<StockfishResult> {
+    return this.searchMove(fen, { movetimeMs: thinkMs, depth: 10 });
+  }
+
+  /**
+   * General search command.
+   */
+  searchMove(fen: string, options?: { depth?: number; movetimeMs?: number }): Promise<StockfishResult> {
     return new Promise((resolve, reject) => {
       if (!this.worker) {
         reject(new Error('Stockfish not available'));
@@ -139,13 +155,27 @@ export class StockfishEngine {
       this.pendingReject = reject;
       this.lastScoreCp = 0;
 
+      const movetime = options?.movetimeMs ?? 200;
+      const depth = options?.depth;
+
       this.pendingTimeout = setTimeout(() => {
         this._cleanupPending(new Error('Stockfish evaluation timed out'));
-      }, thinkMs + 6000);
+      }, Math.max(movetime, 500) + 6000);
 
       this._send(`position fen ${fen}`);
-      this._send(`go movetime ${thinkMs}`);
+      if (depth !== undefined && depth > 0) {
+        this._send(`go depth ${depth} movetime ${movetime}`);
+      } else {
+        this._send(`go movetime ${movetime}`);
+      }
     });
+  }
+
+  /**
+   * Backward-compatible alias.
+   */
+  getBestMove(fen: string, thinkMs = 500): Promise<StockfishResult> {
+    return this.searchMove(fen, { movetimeMs: thinkMs });
   }
 
   destroy(): void {

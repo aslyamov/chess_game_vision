@@ -15,6 +15,25 @@ export function getMoveKey(from: string, to: string): string {
 }
 
 /**
+ * Get legal destinations for current side to move (fast, no threat parsing).
+ */
+export function getLegalDests(game: Chess): Map<string, string[]> {
+  const dests = new Map<string, string[]>();
+  try {
+    const moves = game.moves({ verbose: true });
+    for (const m of moves) {
+      const list = dests.get(m.from);
+      if (list) {
+        list.push(m.to);
+      } else {
+        dests.set(m.from, [m.to]);
+      }
+    }
+  } catch { /* ignore */ }
+  return dests;
+}
+
+/**
  * Analyze checks and captures for both sides from a given FEN in a single pass,
  * including legal destinations for board interaction.
  */
@@ -104,22 +123,14 @@ function getMovesForColor(
         piece: m.piece,
       };
 
-      // Capture: flag 'c' (capture) or 'e' (en passant)
-      if (m.flags.includes('c') || m.flags.includes('e')) {
+      // Capture: flag 'c' (capture) or 'e' (en passant) or captured property
+      if (m.flags.includes('c') || m.flags.includes('e') || m.captured) {
         captures.push(threat);
       }
 
-      // Check: only valid if opponent was not already in check before this move
-      if (color === origTurn || !origInCheck) {
-        try {
-          game.move(m);
-          if (game.inCheck()) {
-            checks.push(threat);
-          }
-          game.undo();
-        } catch {
-          // ignore
-        }
+      // Check: SAN already denotes check/mate with '+' or '#'
+      if ((color === origTurn || !origInCheck) && (m.san.includes('+') || m.san.includes('#'))) {
+        checks.push(threat);
       }
     }
   } catch {
@@ -141,34 +152,28 @@ function buildMap(moves: ThreatMove[]): Map<string, ThreatMove> {
  * Get all legal destinations for both colors (used by chessground dests).
  */
 export function getAllDests(fen: string): Map<string, string[]> {
-  const destsMap = new Map<string, Set<string>>();
+  const dests = new Map<string, string[]>();
 
-  const addDestsForColor = (f: string) => {
+  const collectForColor = (f: string) => {
     try {
       const g = new Chess(f);
-      const moves = g.moves({ verbose: true });
-      for (const m of moves) {
-        let set = destsMap.get(m.from);
-        if (!set) {
-          set = new Set<string>();
-          destsMap.set(m.from, set);
+      for (const m of g.moves({ verbose: true })) {
+        const list = dests.get(m.from);
+        if (list) {
+          list.push(m.to);
+        } else {
+          dests.set(m.from, [m.to]);
         }
-        set.add(m.to);
       }
     } catch { /* ignore */ }
   };
 
-  addDestsForColor(fen);
+  collectForColor(fen);
 
-  // Also add opponent moves so chessground can show them (for visual only)
   const tokens = fen.split(' ');
   tokens[1] = tokens[1] === 'w' ? 'b' : 'w';
   tokens[3] = '-';
-  addDestsForColor(tokens.join(' '));
+  collectForColor(tokens.join(' '));
 
-  const result = new Map<string, string[]>();
-  for (const [from, toSet] of destsMap) {
-    result.set(from, Array.from(toSet));
-  }
-  return result;
+  return dests;
 }

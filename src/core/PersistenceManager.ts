@@ -24,9 +24,17 @@ export class PersistenceManager {
       const raw = localStorage.getItem(KEYS.SETTINGS);
       if (raw) {
         const loaded = JSON.parse(raw);
+        let level = DEFAULT_SETTINGS.stockfishLevel;
+        if (typeof loaded.stockfishLevel === 'number') {
+          level = Math.max(1, Math.min(8, Math.round(loaded.stockfishLevel)));
+        } else if (typeof loaded.stockfishElo === 'number') {
+          level = Math.max(1, Math.min(8, Math.round((loaded.stockfishElo - 500) / 300)));
+        }
+
         return {
           ...DEFAULT_SETTINGS,
           ...loaded,
+          stockfishLevel: level,
           formspreeEndpoint: loaded.formspreeEndpoint || DEFAULT_FORMSPREE_ENDPOINT,
         };
       }

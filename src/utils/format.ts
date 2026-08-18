@@ -16,9 +16,5 @@ export function formatTime(ms: number): string {
 
 export function formatSearchTime(remainingMs: number): string {
   const secs = Math.max(0, Math.ceil(remainingMs / 1000));
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return m > 0
-    ? `${m}:${s.toString().padStart(2, '0')}`
-    : `:${s.toString().padStart(2, '0')}`;
+  return String(secs);
 }

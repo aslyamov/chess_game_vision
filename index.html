@@ -35,12 +35,12 @@
       </div>
 
       <div class="field-group">
-        <label class="field-label" for="sf-elo">
-          🤖 Сила Stockfish
-          <span id="sf-elo-display" class="badge-val">1500 Elo</span>
+        <label class="field-label" for="sf-level">
+          🤖 Уровень Stockfish
+          <span id="sf-level-display" class="badge-val">Уровень 3 (~1400)</span>
         </label>
-        <input id="sf-elo" class="field-range" type="range" min="600" max="2800" step="100" value="1500" aria-label="Сила Stockfish" />
-        <div class="range-labels" aria-hidden="true"><span>600</span><span>2800</span></div>
+        <input id="sf-level" class="field-range" type="range" min="1" max="8" step="1" value="3" aria-label="Уровень Stockfish" />
+        <div class="range-labels" aria-hidden="true"><span>Ур. 1 (~800)</span><span>Ур. 8 (~2800+)</span></div>
       </div>
 
       <div class="field-group">
@@ -48,8 +48,8 @@
           ⏱ Таймер поиска
           <span id="search-timer-display" class="badge-val">30 сек</span>
         </label>
-        <input id="search-timer" class="field-range" type="range" min="5" max="120" step="5" value="30" aria-label="Таймер поиска" />
-        <div class="range-labels" aria-hidden="true"><span>5 сек</span><span>120 сек</span></div>
+        <input id="search-timer" class="field-range" type="range" min="0" max="120" step="5" value="30" aria-label="Таймер поиска" />
+        <div class="range-labels" aria-hidden="true"><span>0 (до всех угроз)</span><span>120 сек</span></div>
       </div>
 
       <div class="grid-2">
@@ -90,19 +90,6 @@
 <!-- ==================== GAME SCREEN ==================== -->
 <section id="game-screen" class="screen hidden" aria-label="Игровое поле">
 
-  <!-- Topbar -->
-  <header class="topbar">
-    <div class="topbar-left">
-      <button id="btn-menu" class="btn btn--ghost btn--sm">← Меню</button>
-    </div>
-    <div class="topbar-center">
-      <span id="phase-badge" class="phase-badge phase-badge--search">🔍 Поиск шахов и взятий</span>
-    </div>
-    <div class="topbar-right">
-      <span id="status-msg" class="status-msg" aria-live="polite">Загрузка…</span>
-    </div>
-  </header>
-
   <!-- Main layout: board + sidebar -->
   <div class="game-main">
 
@@ -115,7 +102,7 @@
           <span id="opp-avatar" class="player-avatar" aria-hidden="true">♚</span>
           <span id="opp-name-display" class="player-name">Stockfish</span>
         </div>
-        <div id="clock-black" class="clock clock--inactive" aria-label="Время соперника">10:00</div>
+        <div id="clock-opp" class="clock clock--inactive" aria-label="Время соперника">10:00</div>
       </div>
 
       <!-- Board -->
@@ -129,13 +116,22 @@
           <span id="player-avatar" class="player-avatar" aria-hidden="true">♔</span>
           <span class="player-name" id="player-name-display">Вы</span>
         </div>
-        <div id="clock-white" class="clock clock--inactive" aria-label="Ваше время">10:00</div>
+        <div id="clock-player" class="clock clock--inactive" aria-label="Ваше время">10:00</div>
       </div>
 
     </div>
 
     <!-- ── Right Sidebar ── -->
     <aside class="sidebar">
+
+      <!-- Navigation & Status Card -->
+      <div class="card card--compact sidebar-header-card">
+        <div class="sidebar-top-row">
+          <button id="btn-menu" class="btn btn--ghost btn--sm">← Меню</button>
+          <span id="phase-badge" class="phase-badge phase-badge--search">🔍 Поиск шахов и взятий</span>
+        </div>
+        <div id="status-msg" class="status-msg" aria-live="polite">Загрузка…</div>
+      </div>
 
       <!-- Search timer card -->
       <div id="search-timer-card" class="card">
@@ -149,9 +145,8 @@
             <circle id="ring-progress" class="ring-fill" cx="60" cy="60" r="50"
               stroke-dasharray="314" stroke-dashoffset="0"/>
           </svg>
-          <div id="ring-inner-text" class="ring-inner">:30</div>
+          <div id="ring-inner-text" class="ring-inner">30</div>
         </div>
-        <div id="search-timer-display-game" class="timer-text">:30</div>
       </div>
 
       <!-- Threat counters card -->
