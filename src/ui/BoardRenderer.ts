@@ -7,6 +7,7 @@ import type { DrawShape, CGColor } from '../types/index.js';
 import { getAllDests } from '../core/ThreatAnalyzer.js';
 
 interface BoardConfig {
+  orientation?: 'white' | 'black';
   onMove: (orig: string, dest: string) => void;
 }
 
@@ -14,8 +15,10 @@ export class BoardRenderer {
   private el: HTMLElement;
   private ground: any = null;
   private Chessground: any;
+  private orientation: 'white' | 'black' = 'white';
   private persistentShapes: DrawShape[] = [];
   private onMoveCallback: (orig: string, dest: string) => void = () => {};
+  private flashTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(el: HTMLElement, ChessgroundLib: any) {
     this.el = el;
@@ -24,17 +27,15 @@ export class BoardRenderer {
 
   initialize(config: BoardConfig): void {
     this.onMoveCallback = config.onMove;
-    if (this.ground) {
-      this.ground.destroy();
-      this.ground = null;
-    }
+    this.orientation = config.orientation ?? 'white';
+    this.destroy();
     this.el.innerHTML = '';
     this.persistentShapes = [];
 
     // ALWAYS initialize without viewOnly so Chessground attaches all event listeners
     this.ground = this.Chessground(this.el, {
       fen: 'start',
-      orientation: 'white',
+      orientation: this.orientation,
       coordinates: true,
       movable: {
         color: 'both',
@@ -58,67 +59,18 @@ export class BoardRenderer {
     }, 50);
   }
 
+  setOrientation(o: 'white' | 'black'): void {
+    this.orientation = o;
+    this.ground?.set({ orientation: o });
+  }
+
   // ── Position & Mode Setup ──────────────────────────────────
 
-  /**
-   * Set board for Phase A (threat search):
-   * movable color = 'both' so user can drag any piece to test threats.
-   */
-  setSearchMode(fen: string, dests: Map<string, string[]>): void {
+  private _setBoardMode(fen: string, dests: Map<string, string[]>, color: CGColor, extraShapes: DrawShape[] = []): void {
     if (!this.ground) return;
     this.ground.set({
       fen,
-      turnColor: 'white',
-      movable: {
-        color: 'both' as CGColor,
-        free: false,
-        dests,
-        events: {
-          after: (orig: string, dest: string) => {
-            this.onMoveCallback(orig, dest);
-          },
-        },
-      },
-      drawable: {
-        autoShapes: this.persistentShapes,
-      },
-    });
-  }
-
-  /**
-   * Set board for Phase B (player move):
-   * movable color = 'white', turnColor = 'white'.
-   */
-  setMoveMode(fen: string, dests: Map<string, string[]>): void {
-    if (!this.ground) return;
-    this.ground.set({
-      fen,
-      turnColor: 'white',
-      movable: {
-        color: 'white' as CGColor,
-        free: false,
-        dests,
-        events: {
-          after: (orig: string, dest: string) => {
-            this.onMoveCallback(orig, dest);
-          },
-        },
-      },
-      drawable: {
-        autoShapes: this.persistentShapes,
-      },
-    });
-  }
-
-  /**
-   * Visually reset board after threat attempt in Phase A
-   */
-  undoVisual(fen: string, dests: Map<string, string[]>, isSearchMode = true): void {
-    if (!this.ground) return;
-    const color: CGColor = isSearchMode ? 'both' : 'white';
-    this.ground.set({
-      fen,
-      turnColor: 'white',
+      turnColor: this.orientation,
       movable: {
         color,
         free: false,
@@ -130,19 +82,38 @@ export class BoardRenderer {
         },
       },
       drawable: {
-        shapes: [],
+        shapes: extraShapes,
         autoShapes: this.persistentShapes,
       },
     });
   }
 
+  /**
+   * Set board for Phase A (threat search):
+   * movable color = 'both' so user can drag any piece to test threats.
+   */
+  setSearchMode(fen: string, dests: Map<string, string[]>): void {
+    this._setBoardMode(fen, dests, 'both');
+  }
+
+  /**
+   * Set board for Phase B (player move):
+   * movable color matches player orientation.
+   */
+  setMoveMode(fen: string, dests: Map<string, string[]>): void {
+    this._setBoardMode(fen, dests, this.orientation);
+  }
+
+  /**
+   * Visually reset board after threat attempt in Phase A
+   */
+  undoVisual(fen: string, dests: Map<string, string[]>, isSearchMode = true): void {
+    this._setBoardMode(fen, dests, isSearchMode ? 'both' : this.orientation);
+  }
+
   setFen(fen: string): void {
     if (!this.ground) return;
     this.ground.set({ fen });
-  }
-
-  setOrientation(o: 'white' | 'black'): void {
-    this.ground?.set({ orientation: o });
   }
 
   // ── Shapes & Highlights ────────────────────────────────────
@@ -159,20 +130,21 @@ export class BoardRenderer {
 
   flashShape(shape: DrawShape, durationMs = 500): void {
     if (!this.ground) return;
+    if (this.flashTimeout) clearTimeout(this.flashTimeout);
+
     this.ground.set({
       drawable: {
         autoShapes: [...this.persistentShapes, shape],
       },
     });
-    setTimeout(() => this._syncShapes(), durationMs);
+    this.flashTimeout = setTimeout(() => {
+      this._syncShapes();
+      this.flashTimeout = null;
+    }, durationMs);
   }
 
   highlightMove(orig: string, dest: string, brush: string): void {
     this.addPersistentShape({ orig, dest, brush });
-  }
-
-  highlightSquare(sq: string, brush: string): void {
-    this.addPersistentShape({ orig: sq, brush });
   }
 
   private _syncShapes(): void {
@@ -186,6 +158,10 @@ export class BoardRenderer {
   }
 
   destroy(): void {
+    if (this.flashTimeout) {
+      clearTimeout(this.flashTimeout);
+      this.flashTimeout = null;
+    }
     if (this.ground) {
       this.ground.destroy();
       this.ground = null;

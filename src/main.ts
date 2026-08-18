@@ -4,23 +4,27 @@
  */
 
 import { Chessground } from 'chessground';
-import type { GameSettings, GameStats } from './types/index.js';
+import type { GameSettings, PlayerColor } from './types/index.js';
+import { DEFAULT_FORMSPREE_ENDPOINT } from './types/index.js';
 import {
   GameLoop,
   type GameLoopCallbacks,
   type FoundSet,
   type ThreatTotals,
   type GameOverResult,
-  formatTime,
 } from './core/GameLoop.js';
 import { BoardRenderer } from './ui/BoardRenderer.js';
 import { persistence } from './core/PersistenceManager.js';
 import { sendReport } from './utils/report-sender.js';
+import { pct, formatTime, formatSearchTime } from './utils/format.js';
 
 // ── DOM Helpers ───────────────────────────────────────────────
 
-const $ = <T extends HTMLElement = HTMLElement>(id: string): T =>
-  document.getElementById(id) as T;
+const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`Element #${id} not found`);
+  return el as T;
+};
 
 // ── DOM References ────────────────────────────────────────────
 
@@ -48,8 +52,16 @@ const clockWhite      = $('clock-white');
 const clockBlack      = $('clock-black');
 const boardEl         = $('board');
 const playerNameDisp  = $('player-name-display');
+const oppNameDisp     = $('opp-name-display');
+const playerAvatar    = $('player-avatar');
+const oppAvatar       = $('opp-avatar');
 
-const ringProgress    = document.getElementById('ring-progress') as unknown as SVGCircleElement;
+const counterHdrMine  = $('counter-hdr-mine');
+const counterHdrOpp   = $('counter-hdr-opp');
+const statHdrMine     = $('stat-hdr-mine');
+const statHdrOpp      = $('stat-hdr-opp');
+
+const ringProgress    = document.querySelector<SVGCircleElement>('#ring-progress')!;
 const ringInnerText   = $('ring-inner-text');
 const searchTimerDisp = $('search-timer-display-game');
 const countersCard    = $('counters-card');
@@ -65,6 +77,32 @@ let currentSettings: GameSettings = persistence.loadSettings();
 let lastGameOver: GameOverResult | null = null;
 let searchTimerTotal = 0;
 
+function renderSearchTimer(remainingMs: number, totalMs: number): void {
+  const label = formatSearchTime(remainingMs);
+
+  searchTimerDisp.textContent = label;
+  ringInnerText.textContent   = label;
+
+  const fraction = totalMs > 0 ? Math.max(0, Math.min(1, remainingMs / totalMs)) : 1;
+  const circumference = 314;
+  ringProgress.style.strokeDashoffset = String(circumference * (1 - fraction));
+  ringProgress.style.stroke =
+    remainingMs < 10_000 ? '#f87272' :
+    remainingMs < 20_000 ? '#fbbd23' :
+                           '#3abff8';
+}
+
+function updateColorTheme(studentColor: PlayerColor): void {
+  const isWhite = studentColor === 'w';
+  boardRenderer?.setOrientation(isWhite ? 'white' : 'black');
+  playerAvatar.textContent   = isWhite ? '♔' : '♚';
+  oppAvatar.textContent      = isWhite ? '♚' : '♔';
+  counterHdrMine.textContent = isWhite ? '♔ Ваши возможности' : '♚ Ваши возможности';
+  counterHdrOpp.textContent  = isWhite ? '♚ Угрозы соперника' : '♔ Угрозы соперника';
+  statHdrMine.textContent    = isWhite ? '♔ Ваши угрозы' : '♚ Ваши угрозы';
+  statHdrOpp.textContent     = isWhite ? '♚ Угрозы Stockfish' : '♔ Угрозы Stockfish';
+}
+
 // ── Settings Screen ───────────────────────────────────────────
 
 function initSettingsScreen(): void {
@@ -76,13 +114,17 @@ function initSettingsScreen(): void {
   inpMinutes.value       = String(currentSettings.gameTimeMinutes);
   inpIncrement.value     = String(currentSettings.incrementSeconds);
   inpShowCounts.checked  = currentSettings.showTargetCounts;
-  inpFormspree.value     = currentSettings.formspreeEndpoint;
+  inpFormspree.value     = currentSettings.formspreeEndpoint || DEFAULT_FORMSPREE_ENDPOINT;
+
+  renderSearchTimer(currentSettings.searchTimerSeconds * 1000, currentSettings.searchTimerSeconds * 1000);
 
   inpElo.addEventListener('input', () => {
     inpEloDisp.textContent = `${inpElo.value} Elo`;
   });
   inpSearchTimer.addEventListener('input', () => {
-    inpSearchDisp.textContent = `${inpSearchTimer.value} сек`;
+    const val = parseInt(inpSearchTimer.value, 10) || 30;
+    inpSearchDisp.textContent = `${val} сек`;
+    renderSearchTimer(val * 1000, val * 1000);
   });
 
   if (persistence.hasUnfinishedGame()) {
@@ -103,7 +145,7 @@ function readSettings(): GameSettings {
     showTargetCounts:   inpShowCounts.checked,
     gameTimeMinutes:    parseInt(inpMinutes.value, 10) || 10,
     incrementSeconds:   parseInt(inpIncrement.value, 10) || 0,
-    formspreeEndpoint:  inpFormspree.value.trim(),
+    formspreeEndpoint:  inpFormspree.value.trim() || DEFAULT_FORMSPREE_ENDPOINT,
   };
 }
 
@@ -122,14 +164,16 @@ function goToSettings(): void {
   btnResume.classList.toggle('hidden', !persistence.hasUnfinishedGame());
 }
 
-// ── Game Lifecycle ────────────────────────────────────────────
+// ── Game Lifecycle ────────────────────────────────────
 
 function startGame(resume: boolean): void {
   currentSettings = readSettings();
   persistence.saveSettings(currentSettings);
   searchTimerTotal = currentSettings.searchTimerSeconds * 1000;
+  renderSearchTimer(searchTimerTotal, searchTimerTotal);
 
   playerNameDisp.textContent = currentSettings.studentName || 'Вы';
+  oppNameDisp.textContent    = `Stockfish (${currentSettings.stockfishElo})`;
   countersCard.classList.toggle('hidden', !currentSettings.showTargetCounts);
 
   showScreen('game');
@@ -158,8 +202,14 @@ function handleBoardMove(orig: string, dest: string): void {
 
 function buildCallbacks(): GameLoopCallbacks {
   return {
+    onGameInit(studentColor) {
+      updateColorTheme(studentColor);
+    },
+
     onPhaseChange(phase, fen, dests) {
       const isSearch = phase === 'search';
+      const studentColor = gameLoop?.getStudentColor() ?? 'w';
+      const isStudentTurn = !isSearch;
 
       if (isSearch) {
         phaseBadge.className = 'phase-badge phase-badge--search';
@@ -173,30 +223,21 @@ function buildCallbacks(): GameLoopCallbacks {
         boardRenderer?.setMoveMode(fen, dests);
       }
 
-      clockWhite.classList.toggle('clock--active',   !isSearch);
-      clockWhite.classList.toggle('clock--inactive',  isSearch);
-      clockBlack.classList.remove('clock--active');
-      clockBlack.classList.add('clock--inactive');
+      if (studentColor === 'w') {
+        clockWhite.classList.toggle('clock--active',   isStudentTurn);
+        clockWhite.classList.toggle('clock--inactive', !isStudentTurn);
+        clockBlack.classList.remove('clock--active');
+        clockBlack.classList.add('clock--inactive');
+      } else {
+        clockBlack.classList.toggle('clock--active',   isStudentTurn);
+        clockBlack.classList.toggle('clock--inactive', !isStudentTurn);
+        clockWhite.classList.remove('clock--active');
+        clockWhite.classList.add('clock--inactive');
+      }
     },
 
     onSearchTimerTick(remainingMs) {
-      const secs = Math.max(0, Math.ceil(remainingMs / 1000));
-      const m = Math.floor(secs / 60);
-      const s = secs % 60;
-      const label = m > 0
-        ? `${m}:${s.toString().padStart(2, '0')}`
-        : `:${s.toString().padStart(2, '0')}`;
-
-      searchTimerDisp.textContent = label;
-      ringInnerText.textContent   = label;
-
-      const fraction = Math.max(0, Math.min(1, remainingMs / searchTimerTotal));
-      const circumference = 314;
-      ringProgress.style.strokeDashoffset = String(circumference * (1 - fraction));
-      ringProgress.style.stroke =
-        remainingMs < 10_000 ? '#f87272' :
-        remainingMs < 20_000 ? '#fbbd23' :
-                               '#3abff8';
+      renderSearchTimer(remainingMs, searchTimerTotal);
     },
 
     onGameTimerTick(whiteMs, blackMs) {
@@ -252,27 +293,33 @@ function buildCallbacks(): GameLoopCallbacks {
 
 type CounterKey = 'myChecks' | 'myCaptures' | 'oppChecks' | 'oppCaptures';
 
+const counterDomCache: Partial<Record<CounterKey, { foundEl: HTMLElement | null; totalEl: HTMLElement | null; barEl: HTMLElement | null }>> = {};
+
 function updateCounter(cat: CounterKey, found: number, total: number): void {
-  const el = (id: string) => document.getElementById(id);
-  const foundEl = el(`found-${cat}`);
-  const totalEl = el(`total-${cat}`);
-  const barEl   = el(`bar-${cat}`);
-  if (foundEl) foundEl.textContent = String(found);
-  if (totalEl) totalEl.textContent = String(total);
-  if (barEl) {
-    const pct = total > 0 ? (found / total) * 100 : 0;
-    barEl.style.width = `${pct}%`;
-    barEl.style.background = pct >= 100 ? '#36d399' : '';
+  let dom = counterDomCache[cat];
+  if (!dom) {
+    dom = {
+      foundEl: document.getElementById(`found-${cat}`),
+      totalEl: document.getElementById(`total-${cat}`),
+      barEl:   document.getElementById(`bar-${cat}`),
+    };
+    counterDomCache[cat] = dom;
+  }
+  if (dom.foundEl) dom.foundEl.textContent = String(found);
+  if (dom.totalEl) dom.totalEl.textContent = String(total);
+  if (dom.barEl) {
+    const pctVal = total === 0 ? 100 : (found / total) * 100;
+    dom.barEl.style.width = `${pctVal}%`;
+    dom.barEl.style.background = pctVal >= 100 ? '#36d399' : '';
   }
 }
 
-function pct(found: number, total: number): string {
-  if (total === 0) return '—';
-  return `${found}/${total} (${Math.round((found / total) * 100)}%)`;
-}
-
 function showStatsModal(result: GameOverResult): void {
-  const s = result.stats as GameStats;
+  const s = result.stats;
+  const isWhite = result.studentColor === 'w';
+
+  statHdrMine.textContent = isWhite ? '♔ Ваши угрозы' : '♚ Ваши угрозы';
+  statHdrOpp.textContent  = isWhite ? '♚ Угрозы Stockfish' : '♔ Угрозы Stockfish';
 
   $('stat-myChecks').textContent    = pct(s.myChecks.found,    s.myChecks.total);
   $('stat-myCaptures').textContent  = pct(s.myCaptures.found,  s.myCaptures.total);
@@ -291,10 +338,12 @@ function showStatsModal(result: GameOverResult): void {
   $('stat-total-time').textContent = `${totalSec} сек`;
   $('stat-avg-time').textContent   = `${avgSec} сек`;
 
+  const studentWon = result.winner === (isWhite ? 'white' : 'black');
+
   const reasons: Record<string, string> = {
-    checkmate: result.winner === 'white' ? '🏆 Вы поставили мат!' : '♟ Stockfish поставил мат',
+    checkmate: studentWon ? '🏆 Вы поставили мат!' : '♟ Stockfish поставил мат',
     stalemate: '🤝 Пат',
-    timeout:   result.winner === 'white' ? '⏰ Время Stockfish вышло' : '⏰ Ваше время вышло',
+    timeout:   studentWon ? '⏰ Время Stockfish вышло' : '⏰ Ваше время вышло',
     draw:      '🤝 Ничья',
   };
   $('stat-result-msg').textContent = reasons[result.reason] ?? '';
@@ -303,10 +352,18 @@ function showStatsModal(result: GameOverResult): void {
 }
 
 function initModalActions(): void {
-  btnNewGame.addEventListener('click', () => {
+  const closeModal = () => {
     statsModal.classList.add('hidden');
     persistence.clearGameState();
     goToSettings();
+  };
+
+  btnNewGame.addEventListener('click', closeModal);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !statsModal.classList.contains('hidden')) {
+      closeModal();
+    }
   });
 
   btnSendReport.addEventListener('click', async () => {
@@ -316,7 +373,7 @@ function initModalActions(): void {
     try {
       await sendReport({
         settings: currentSettings,
-        stats: lastGameOver.stats as GameStats,
+        stats: lastGameOver.stats,
         pgn: lastGameOver.pgn,
         date: new Date().toLocaleDateString('ru-RU', {
           day: '2-digit', month: '2-digit', year: 'numeric',

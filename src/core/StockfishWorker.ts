@@ -10,6 +10,7 @@ export class StockfishEngine {
   private ready = false;
   private pendingResolve: ((r: StockfishResult) => void) | null = null;
   private pendingReject: ((e: Error) => void) | null = null;
+  private pendingTimeout: ReturnType<typeof setTimeout> | null = null;
   private currentElo = 1500;
   private lastScoreCp = 0;
 
@@ -42,9 +43,7 @@ export class StockfishEngine {
     this.worker.onmessage = (e: MessageEvent) => this._onMessage(e.data);
     this.worker.onerror = (e: ErrorEvent) => {
       console.error('Stockfish error:', e);
-      this.pendingReject?.(new Error(e.message));
-      this.pendingReject = null;
-      this.pendingResolve = null;
+      this._cleanupPending(new Error(e.message || 'Stockfish worker error'));
     };
 
     this._send('uci');
@@ -52,6 +51,20 @@ export class StockfishEngine {
 
   private _send(cmd: string): void {
     this.worker?.postMessage(cmd);
+  }
+
+  private _cleanupPending(err?: Error, result?: StockfishResult): void {
+    if (this.pendingTimeout) {
+      clearTimeout(this.pendingTimeout);
+      this.pendingTimeout = null;
+    }
+    if (result && this.pendingResolve) {
+      this.pendingResolve(result);
+    } else if (err && this.pendingReject) {
+      this.pendingReject(err);
+    }
+    this.pendingResolve = null;
+    this.pendingReject = null;
   }
 
   private _onMessage(data: string): void {
@@ -75,7 +88,9 @@ export class StockfishEngine {
         const mateMatch = data.match(/score mate (-?\d+)/);
         if (mateMatch) {
           const mateIn = parseInt(mateMatch[1], 10);
-          this.lastScoreCp = mateIn > 0 ? 10000 : -10000;
+          this.lastScoreCp = mateIn > 0
+            ? (10000 - Math.min(100, Math.abs(mateIn) * 10))
+            : (-10000 + Math.min(100, Math.abs(mateIn) * 10));
         }
       }
     }
@@ -84,12 +99,7 @@ export class StockfishEngine {
     if (data.startsWith('bestmove')) {
       const parts = data.split(' ');
       const bestMove = parts[1] || '';
-
-      if (this.pendingResolve) {
-        this.pendingResolve({ bestMove, score: this.lastScoreCp });
-        this.pendingResolve = null;
-        this.pendingReject = null;
-      }
+      this._cleanupPending(undefined, { bestMove, score: this.lastScoreCp });
     }
   }
 
@@ -120,36 +130,27 @@ export class StockfishEngine {
         return;
       }
 
+      // Reject previous pending request if new one arrives
+      if (this.pendingReject) {
+        this._cleanupPending(new Error('Cancelled by subsequent request'));
+      }
+
       this.pendingResolve = resolve;
       this.pendingReject = reject;
       this.lastScoreCp = 0;
+
+      this.pendingTimeout = setTimeout(() => {
+        this._cleanupPending(new Error('Stockfish evaluation timed out'));
+      }, thinkMs + 6000);
 
       this._send(`position fen ${fen}`);
       this._send(`go movetime ${thinkMs}`);
     });
   }
 
-  /**
-   * Evaluate a specific player move against Stockfish's best move.
-   * Returns { bestMove, isBestMove }.
-   */
-  async evaluatePlayerMove(fen: string, _playerMove: string): Promise<{ bestMove: string; isBestMove: boolean }> {
-    try {
-      const result = await this.getBestMove(fen, 300);
-      // Convert UCI move format: "e2e4" → "e2-e4" or check exact
-      const stockfishMove = result.bestMove.replace(/(..)(..).*/, '$1$2'); // strip promotion
-      const playerMoveNorm = _playerMove.replace('-', '').substring(0, 4);
-      const isBestMove = stockfishMove === playerMoveNorm;
-      return { bestMove: result.bestMove, isBestMove };
-    } catch {
-      return { bestMove: '', isBestMove: false };
-    }
-  }
-
   destroy(): void {
+    this._cleanupPending(new Error('Stockfish destroyed'));
     this.worker?.terminate();
     this.worker = null;
-    this.pendingResolve = null;
-    this.pendingReject = null;
   }
 }

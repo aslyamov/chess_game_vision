@@ -21,7 +21,7 @@
   <div class="card-wide">
     <!-- Header -->
     <div class="card-header">
-      <div class="logo-icon">♞</div>
+      <div class="logo-icon" aria-hidden="true">♞</div>
       <h1>Chess Game Vision</h1>
       <p>Шахматный тренажёр с поиском угроз и игрой против Stockfish</p>
     </div>
@@ -31,25 +31,25 @@
 
       <div class="field-group">
         <label class="field-label" for="student-name">👤 Имя ученика</label>
-        <input id="student-name" class="field-input" type="text" placeholder="Введите имя" />
+        <input id="student-name" class="field-input" type="text" autocomplete="name" placeholder="Введите имя" />
       </div>
 
       <div class="field-group">
-        <label class="field-label">
+        <label class="field-label" for="sf-elo">
           🤖 Сила Stockfish
           <span id="sf-elo-display" class="badge-val">1500 Elo</span>
         </label>
-        <input id="sf-elo" class="field-range" type="range" min="600" max="2800" step="100" value="1500" />
-        <div class="range-labels"><span>600</span><span>2800</span></div>
+        <input id="sf-elo" class="field-range" type="range" min="600" max="2800" step="100" value="1500" aria-label="Сила Stockfish" />
+        <div class="range-labels" aria-hidden="true"><span>600</span><span>2800</span></div>
       </div>
 
       <div class="field-group">
-        <label class="field-label">
+        <label class="field-label" for="search-timer">
           ⏱ Таймер поиска
           <span id="search-timer-display" class="badge-val">30 сек</span>
         </label>
-        <input id="search-timer" class="field-range" type="range" min="5" max="120" step="5" value="30" />
-        <div class="range-labels"><span>5 сек</span><span>120 сек</span></div>
+        <input id="search-timer" class="field-range" type="range" min="5" max="120" step="5" value="30" aria-label="Таймер поиска" />
+        <div class="range-labels" aria-hidden="true"><span>5 сек</span><span>120 сек</span></div>
       </div>
 
       <div class="grid-2">
@@ -65,10 +65,10 @@
 
       <div class="field-group">
         <label class="field-label" for="formspree-url">📧 URL Formspree (для отчёта)</label>
-        <input id="formspree-url" class="field-input" type="url" placeholder="https://formspree.io/f/..." />
+        <input id="formspree-url" class="field-input" type="url" placeholder="https://formspree.io/f/meajrlwo" value="https://formspree.io/f/meajrlwo" />
       </div>
 
-      <label class="toggle-row">
+      <label class="toggle-row" for="show-counts">
         <input id="show-counts" class="toggle" type="checkbox" checked />
         <span>Показывать счётчики угроз</span>
       </label>
@@ -88,7 +88,7 @@
 </main>
 
 <!-- ==================== GAME SCREEN ==================== -->
-<div id="game-screen" class="screen hidden">
+<section id="game-screen" class="screen hidden" aria-label="Игровое поле">
 
   <!-- Topbar -->
   <header class="topbar">
@@ -99,7 +99,7 @@
       <span id="phase-badge" class="phase-badge phase-badge--search">🔍 Поиск шахов и взятий</span>
     </div>
     <div class="topbar-right">
-      <span id="status-msg" class="status-msg">Загрузка…</span>
+      <span id="status-msg" class="status-msg" aria-live="polite">Загрузка…</span>
     </div>
   </header>
 
@@ -112,10 +112,10 @@
       <!-- Opponent info (Stockfish) -->
       <div class="player-bar player-bar--top">
         <div class="player-info">
-          <span class="player-avatar">♚</span>
-          <span class="player-name">Stockfish</span>
+          <span id="opp-avatar" class="player-avatar" aria-hidden="true">♚</span>
+          <span id="opp-name-display" class="player-name">Stockfish</span>
         </div>
-        <div id="clock-black" class="clock clock--inactive">10:00</div>
+        <div id="clock-black" class="clock clock--inactive" aria-label="Время соперника">10:00</div>
       </div>
 
       <!-- Board -->
@@ -126,16 +126,16 @@
       <!-- Player info -->
       <div class="player-bar player-bar--bottom">
         <div class="player-info">
-          <span class="player-avatar">♔</span>
+          <span id="player-avatar" class="player-avatar" aria-hidden="true">♔</span>
           <span class="player-name" id="player-name-display">Вы</span>
         </div>
-        <div id="clock-white" class="clock clock--inactive">10:00</div>
+        <div id="clock-white" class="clock clock--inactive" aria-label="Ваше время">10:00</div>
       </div>
 
     </div>
 
     <!-- ── Right Sidebar ── -->
-    <div class="sidebar">
+    <aside class="sidebar">
 
       <!-- Search timer card -->
       <div id="search-timer-card" class="card">
@@ -144,7 +144,7 @@
           <button id="btn-skip-search" class="btn btn--primary btn--xs">Сделать ход →</button>
         </div>
         <div class="timer-ring-wrap">
-          <svg class="timer-ring" viewBox="0 0 120 120">
+          <svg class="timer-ring" viewBox="0 0 120 120" aria-hidden="true">
             <circle class="ring-bg" cx="60" cy="60" r="50"/>
             <circle id="ring-progress" class="ring-fill" cx="60" cy="60" r="50"
               stroke-dasharray="314" stroke-dashoffset="0"/>
@@ -159,7 +159,7 @@
         <div class="card-title">📋 Шахи и взятия</div>
 
         <div class="counter-section">
-          <div class="counter-section-hdr counter-section-hdr--mine">♔ Ваши возможности</div>
+          <div id="counter-hdr-mine" class="counter-section-hdr counter-section-hdr--mine">♔ Ваши возможности</div>
 
           <div class="counter-row">
             <span class="counter-label">Шахи</span>
@@ -179,7 +179,7 @@
         </div>
 
         <div class="counter-section">
-          <div class="counter-section-hdr counter-section-hdr--opp">♚ Угрозы соперника</div>
+          <div id="counter-hdr-opp" class="counter-section-hdr counter-section-hdr--opp">♚ Угрозы соперника</div>
 
           <div class="counter-row">
             <span class="counter-label">Шахи</span>
@@ -209,14 +209,14 @@
         </div>
       </div>
 
-    </div>
+    </aside>
   </div>
-</div>
+</section>
 
 <!-- ==================== STATS MODAL ==================== -->
-<div id="stats-modal" class="modal-backdrop hidden">
+<div id="stats-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
   <div class="modal">
-    <h2 class="modal-title">🏁 Партия завершена</h2>
+    <h2 id="modal-title" class="modal-title">🏁 Партия завершена</h2>
 
     <div id="stat-result-msg" class="result-msg"></div>
 
@@ -230,7 +230,7 @@
 
       <!-- Threats -->
       <div class="stat-block">
-        <div class="stat-block-label text--mine">♔ Ваши угрозы</div>
+        <div id="stat-hdr-mine" class="stat-block-label text--mine">♔ Ваши угрозы</div>
         <div class="stat-rows">
           <div class="stat-row"><span>Шахи</span><strong id="stat-myChecks">—</strong></div>
           <div class="stat-row"><span>Взятия</span><strong id="stat-myCaptures">—</strong></div>
@@ -238,7 +238,7 @@
       </div>
 
       <div class="stat-block">
-        <div class="stat-block-label text--opp">♚ Угрозы Stockfish</div>
+        <div id="stat-hdr-opp" class="stat-block-label text--opp">♚ Угрозы Stockfish</div>
         <div class="stat-rows">
           <div class="stat-row"><span>Шахи</span><strong id="stat-oppChecks">—</strong></div>
           <div class="stat-row"><span>Взятия</span><strong id="stat-oppCaptures">—</strong></div>
@@ -263,7 +263,7 @@
 </div>
 
 <!-- Toast container -->
-<div id="toast-container" class="toast-container"></div>
+<div id="toast-container" class="toast-container" aria-live="polite"></div>
 
 <script type="module" src="/src/main.ts"></script>
 </body>

@@ -31,6 +31,7 @@ dist-ssr
 
 # Task and scratch files
 task.txt
+change.txt
 image.png
 
 # Antigravity CLI / agent artifacts

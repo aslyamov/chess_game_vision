@@ -3,17 +3,14 @@
  */
 
 import type { GameStats, GameSettings } from '../types/index.js';
+import { DEFAULT_FORMSPREE_ENDPOINT } from '../types/index.js';
+import { pct } from './format.js';
 
 export interface ReportData {
   settings: GameSettings;
   stats: GameStats;
   pgn: string;
   date: string;
-}
-
-function pct(found: number, total: number): string {
-  if (total === 0) return '—';
-  return `${found}/${total} (${Math.round((found / total) * 100)}%)`;
 }
 
 function buildEmailBody(data: ReportData): string {
@@ -53,11 +50,7 @@ ${data.pgn}
 }
 
 export async function sendReport(data: ReportData): Promise<void> {
-  const endpoint = data.settings.formspreeEndpoint;
-  if (!endpoint) {
-    throw new Error('Formspree endpoint не указан в настройках');
-  }
-
+  const endpoint = data.settings.formspreeEndpoint || DEFAULT_FORMSPREE_ENDPOINT;
   const body = buildEmailBody(data);
 
   // Use FormData (CORS simple request) to bypass OPTIONS preflight block on localhost
@@ -90,7 +83,7 @@ export async function sendReport(data: ReportData): Promise<void> {
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'unknown' }));
-    throw new Error(`Ошибка отправки: ${err.error || res.statusText}`);
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status} ${res.statusText}` }));
+    throw new Error(`Ошибка отправки: ${err.error || res.statusText || res.status}`);
   }
 }

@@ -6,20 +6,29 @@
 import { Chess } from 'chess.js';
 import type { ThreatMove, ThreatResult, PlayerColor } from '../types/index.js';
 
+export interface ThreatAnalysisFullResult extends ThreatResult {
+  dests: Map<string, string[]>;
+}
+
 export function getMoveKey(from: string, to: string): string {
   return `${from}-${to}`;
 }
 
 /**
- * Analyze checks and captures for both sides from a given FEN.
- * @param fen - position to analyze
- * @param studentColor - which color the student plays ('w' or 'b')
+ * Analyze checks and captures for both sides from a given FEN in a single pass,
+ * including legal destinations for board interaction.
  */
-export function analyzeThreatsFull(fen: string, studentColor: PlayerColor = 'w'): ThreatResult {
+export function analyzeThreatsFull(fen: string, studentColor: PlayerColor = 'w'): ThreatAnalysisFullResult {
   const oppColor: PlayerColor = studentColor === 'w' ? 'b' : 'w';
+  const destsMap = new Map<string, Set<string>>();
 
-  const myMoves = getMovesForColor(fen, studentColor);
-  const oppMoves = getMovesForColor(fen, oppColor);
+  const myMoves = getMovesForColor(fen, studentColor, destsMap);
+  const oppMoves = getMovesForColor(fen, oppColor, destsMap);
+
+  const dests = new Map<string, string[]>();
+  for (const [from, toSet] of destsMap) {
+    dests.set(from, Array.from(toSet));
+  }
 
   return {
     myChecks:    myMoves.checks,
@@ -30,6 +39,7 @@ export function analyzeThreatsFull(fen: string, studentColor: PlayerColor = 'w')
     myCapturesMap:  buildMap(myMoves.captures),
     oppChecksMap:   buildMap(oppMoves.checks),
     oppCapturesMap: buildMap(oppMoves.captures),
+    dests,
   };
 }
 
@@ -40,13 +50,19 @@ interface ColorMoves {
 
 /**
  * Get all checks and captures for a given color by temporarily
- * flipping the FEN turn indicator.
+ * flipping the FEN turn indicator when analyzing opponent.
  */
-function getMovesForColor(fen: string, color: PlayerColor): ColorMoves {
+function getMovesForColor(
+  fen: string,
+  color: PlayerColor,
+  destsMap?: Map<string, Set<string>>
+): ColorMoves {
   let origTurn = 'w';
   let origInCheck = false;
+  let origGame: Chess | null = null;
+
   try {
-    const origGame = new Chess(fen);
+    origGame = new Chess(fen);
     origTurn = origGame.turn();
     origInCheck = origGame.inCheck();
   } catch {
@@ -55,17 +71,28 @@ function getMovesForColor(fen: string, color: PlayerColor): ColorMoves {
 
   const tokens = fen.split(' ');
   tokens[1] = color;
-  tokens[3] = '-'; // clear en-passant to avoid illegal positions
+  if (color !== origTurn) {
+    tokens[3] = '-'; // clear en-passant when analyzing off-turn side to avoid illegal position
+  }
 
   const checks: ThreatMove[] = [];
   const captures: ThreatMove[] = [];
   const seen = new Set<string>();
 
   try {
-    const game = new Chess(tokens.join(' '));
-    const moves = game.moves({ verbose: true }) as any[];
+    const game = (color === origTurn && origGame) ? origGame : new Chess(tokens.join(' '));
+    const moves = game.moves({ verbose: true });
 
     for (const m of moves) {
+      if (destsMap) {
+        let set = destsMap.get(m.from);
+        if (!set) {
+          set = new Set<string>();
+          destsMap.set(m.from, set);
+        }
+        set.add(m.to);
+      }
+
       const key = getMoveKey(m.from, m.to);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -114,16 +141,19 @@ function buildMap(moves: ThreatMove[]): Map<string, ThreatMove> {
  * Get all legal destinations for both colors (used by chessground dests).
  */
 export function getAllDests(fen: string): Map<string, string[]> {
-  const dests = new Map<string, string[]>();
+  const destsMap = new Map<string, Set<string>>();
 
   const addDestsForColor = (f: string) => {
     try {
       const g = new Chess(f);
-      const moves = g.moves({ verbose: true }) as any[];
+      const moves = g.moves({ verbose: true });
       for (const m of moves) {
-        const existing = dests.get(m.from) ?? [];
-        if (!existing.includes(m.to)) existing.push(m.to);
-        dests.set(m.from, existing);
+        let set = destsMap.get(m.from);
+        if (!set) {
+          set = new Set<string>();
+          destsMap.set(m.from, set);
+        }
+        set.add(m.to);
       }
     } catch { /* ignore */ }
   };
@@ -136,13 +166,9 @@ export function getAllDests(fen: string): Map<string, string[]> {
   tokens[3] = '-';
   addDestsForColor(tokens.join(' '));
 
-  return dests;
-}
-
-/** Format seconds as MM:SS */
-export function formatTime(ms: number): string {
-  const secs = Math.max(0, Math.ceil(ms / 1000));
-  const m = Math.floor(secs / 60).toString().padStart(2, '0');
-  const s = (secs % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
+  const result = new Map<string, string[]>();
+  for (const [from, toSet] of destsMap) {
+    result.set(from, Array.from(toSet));
+  }
+  return result;
 }

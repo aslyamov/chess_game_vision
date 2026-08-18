@@ -4,18 +4,8 @@
 
 export type PlayerColor = 'w' | 'b';
 export type Phase = 'search' | 'move';
-export type GameResult = 'checkmate' | 'stalemate' | 'timeout' | 'draw';
 
-// ── Move ─────────────────────────────────────────────────────
-export interface MoveData {
-  from: string;
-  to: string;
-  san: string;
-  flags: string;
-  piece: string;
-  color: PlayerColor;
-  captured?: string;
-}
+export const DEFAULT_FORMSPREE_ENDPOINT = 'https://formspree.io/f/meajrlwo';
 
 // ── Threat Analysis ──────────────────────────────────────────
 export interface ThreatMove {
@@ -55,7 +45,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   showTargetCounts: true,
   gameTimeMinutes: 10,
   incrementSeconds: 5,
-  formspreeEndpoint: '',
+  formspreeEndpoint: DEFAULT_FORMSPREE_ENDPOINT,
 };
 
 // ── Game State (for persistence) ─────────────────────────────
@@ -63,6 +53,7 @@ export interface GameState {
   fen: string;
   pgn: string;
   phase: Phase;
+  studentColor: PlayerColor;
   searchTimerRemaining: number;   // ms
   whiteTimeRemaining: number;     // ms
   blackTimeRemaining: number;     // ms
@@ -115,7 +106,6 @@ export interface DrawShape {
   orig: string;
   dest?: string;
   brush: string;
-  piece?: { role: string; color: string };
 }
 
 export type CGColor = 'white' | 'black' | 'both';

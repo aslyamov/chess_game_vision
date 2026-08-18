@@ -3,7 +3,7 @@
  * Uses Lichess win-percentage formula for move and game accuracy.
  */
 
-import type { GameStats, CategoryStats } from '../types/index.js';
+import type { GameStats } from '../types/index.js';
 import { createEmptyStats } from '../types/index.js';
 
 /**
@@ -21,7 +21,7 @@ export function cpToWinPercent(cp: number): number {
  */
 export function calculateMoveAccuracy(winBefore: number, winAfter: number): number {
   const deltaWin = Math.max(0, winBefore - winAfter);
-  if (deltaWin <= 0) return 100;
+  if (deltaWin === 0) return 100;
   const rawAcc = 103.1668 * Math.exp(-0.043544 * deltaWin) - 3.1669;
   return Math.max(0, Math.min(100, Math.round(rawAcc * 10) / 10));
 }
@@ -35,8 +35,39 @@ export class StatsCollector {
     this.searchPhaseStart = null;
   }
 
-  getStats(): Readonly<GameStats> {
-    return this.stats;
+  restoreStats(saved?: GameStats): void {
+    if (!saved) {
+      this.reset();
+      return;
+    }
+    this.stats = {
+      myChecks:    { ...saved.myChecks },
+      myCaptures:  { ...saved.myCaptures },
+      oppChecks:   { ...saved.oppChecks },
+      oppCaptures: { ...saved.oppCaptures },
+      bestMoveMatches: saved.bestMoveMatches ?? 0,
+      totalMoves: saved.totalMoves ?? 0,
+      accuracySum: saved.accuracySum ?? 0,
+      accuracies: Array.isArray(saved.accuracies) ? [...saved.accuracies] : [],
+      totalSearchTimeMs: saved.totalSearchTimeMs ?? 0,
+      searchPhaseCount: saved.searchPhaseCount ?? 0,
+    };
+    this.searchPhaseStart = null;
+  }
+
+  getStats(): GameStats {
+    return {
+      myChecks:    { ...this.stats.myChecks },
+      myCaptures:  { ...this.stats.myCaptures },
+      oppChecks:   { ...this.stats.oppChecks },
+      oppCaptures: { ...this.stats.oppCaptures },
+      bestMoveMatches: this.stats.bestMoveMatches,
+      totalMoves: this.stats.totalMoves,
+      accuracySum: this.stats.accuracySum,
+      accuracies: [...this.stats.accuracies],
+      totalSearchTimeMs: this.stats.totalSearchTimeMs,
+      searchPhaseCount: this.stats.searchPhaseCount,
+    };
   }
 
   // ── Search Phase Timing ──────────────────────────────────────
@@ -78,27 +109,5 @@ export class StatsCollector {
     if (isBestMove || moveAccuracy >= 99.5) {
       this.stats.bestMoveMatches++;
     }
-  }
-
-  // ── Formatted Display ────────────────────────────────────────
-
-  formatPercent(cat: CategoryStats): string {
-    if (cat.total === 0) return '—';
-    return `${cat.found}/${cat.total} (${Math.round((cat.found / cat.total) * 100)}%)`;
-  }
-
-  /** Returns overall game accuracy % according to Lichess formula */
-  getAccuracy(): number {
-    if (this.stats.totalMoves === 0) return 0;
-    return Math.round((this.stats.accuracySum / this.stats.totalMoves) * 10) / 10;
-  }
-
-  getAvgSearchTimeSec(): number {
-    if (this.stats.searchPhaseCount === 0) return 0;
-    return Math.round(this.stats.totalSearchTimeMs / this.stats.searchPhaseCount / 100) / 10;
-  }
-
-  getTotalSearchTimeSec(): number {
-    return Math.round(this.stats.totalSearchTimeMs / 1000);
   }
 }

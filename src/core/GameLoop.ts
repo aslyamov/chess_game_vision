@@ -1,24 +1,26 @@
 /**
  * GameLoop — core state machine for the dual-phase chess trainer.
  *
+ * Supports playing as either White or Black (randomly selected on new game).
+ *
  * Phase A (search):  "Поиск шахов и взятий"
  *   User drags pieces to find checks and captures.
  *   Move is tested against threat maps and visually reverted.
  *
  * Phase B (move):    "Ваш ход"
- *   User plays the actual chess move as White.
+ *   User plays the actual chess move.
  *   Stockfish responds. Loop transitions back to Phase A.
  */
 
 import { Chess } from 'chess.js';
-import type { GameSettings, GameState, Phase, ThreatResult } from '../types/index.js';
-import { createEmptyStats } from '../types/index.js';
-import { analyzeThreatsFull, getMoveKey, getAllDests, formatTime } from './ThreatAnalyzer.js';
+import type { GameSettings, GameState, Phase, ThreatResult, GameStats, PlayerColor } from '../types/index.js';
+import { analyzeThreatsFull, getMoveKey } from './ThreatAnalyzer.js';
 import { StatsCollector, cpToWinPercent, calculateMoveAccuracy } from './StatsCollector.js';
 import { StockfishEngine } from './StockfishWorker.js';
 import { persistence } from './PersistenceManager.js';
 
 export interface GameLoopCallbacks {
+  onGameInit?:       (studentColor: PlayerColor) => void;
   onPhaseChange:     (phase: Phase, fen: string, dests: Map<string, string[]>) => void;
   onSearchTimerTick: (remainingMs: number) => void;
   onGameTimerTick:   (whiteMs: number, blackMs: number) => void;
@@ -48,7 +50,8 @@ export interface ThreatTotals {
 export interface GameOverResult {
   reason: 'checkmate' | 'stalemate' | 'timeout' | 'draw';
   winner?: 'white' | 'black' | 'draw';
-  stats: ReturnType<StatsCollector['getStats']>;
+  studentColor: PlayerColor;
+  stats: GameStats;
   pgn: string;
 }
 
@@ -64,6 +67,7 @@ export class GameLoop {
   private engine: StockfishEngine;
   private statsCollector = new StatsCollector();
 
+  private studentColor: PlayerColor = 'w';
   private game = new Chess();
   private phase: Phase = 'search';
   private threats: ThreatResult | null = null;
@@ -79,6 +83,9 @@ export class GameLoop {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private transitionTimer: ReturnType<typeof setTimeout> | null = null;
 
+  private isBusy = false;
+  private isGameOver = false;
+
   constructor(settings: GameSettings, callbacks: GameLoopCallbacks) {
     this.settings = settings;
     this.cb = callbacks;
@@ -89,15 +96,29 @@ export class GameLoop {
   // ── Public API ───────────────────────────────────────────────
 
   startFresh(): void {
+    this.studentColor = Math.random() < 0.5 ? 'w' : 'b';
+    this.isGameOver = false;
+    this.isBusy = false;
     this.statsCollector.reset();
     this.game = new Chess();
     this.whiteMs = this.settings.gameTimeMinutes * 60 * 1000;
     this.blackMs = this.settings.gameTimeMinutes * 60 * 1000;
     persistence.clearGameState();
-    this._enterPhaseA();
+
+    this.cb.onGameInit?.(this.studentColor);
+    this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
+
+    if (this.studentColor === 'w') {
+      this._enterPhaseA();
+    } else {
+      void this._stockfishOpeningMove();
+    }
   }
 
   restoreFromState(state: GameState): void {
+    this.studentColor = state.studentColor || 'w';
+    this.isGameOver = false;
+    this.isBusy = false;
     this.game = new Chess();
     try {
       this.game.loadPgn(state.pgn);
@@ -106,12 +127,20 @@ export class GameLoop {
     }
     this.whiteMs = state.whiteTimeRemaining;
     this.blackMs = state.blackTimeRemaining;
-    this.statsCollector.reset();
+    this.statsCollector.restoreStats(state.stats);
+
+    this.cb.onGameInit?.(this.studentColor);
+    this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
+
     if (state.phase === 'search') {
       this._enterPhaseA(state.searchTimerRemaining);
     } else {
       this._enterPhaseB();
     }
+  }
+
+  getStudentColor(): PlayerColor {
+    return this.studentColor;
   }
 
   /**
@@ -120,6 +149,8 @@ export class GameLoop {
    * Phase B: executes legal move, triggers Stockfish response.
    */
   handleBoardMove(orig: string, dest: string): void {
+    if (this.isGameOver || this.isBusy) return;
+
     if (this.phase === 'search') {
       this._handleThreatClick(orig, dest);
     } else {
@@ -131,6 +162,8 @@ export class GameLoop {
    * Skip threat search and go directly to player move phase
    */
   skipToMovePhase(): void {
+    if (this.isGameOver || this.isBusy) return;
+
     if (this.phase === 'search') {
       this.searchTicker.stop();
       if (this.transitionTimer) clearTimeout(this.transitionTimer);
@@ -145,6 +178,8 @@ export class GameLoop {
   getSearchTotal():  number                { return this.settings.searchTimerSeconds * 1000; }
 
   destroy(): void {
+    this.isGameOver = true;
+    this.isBusy = false;
     this.searchTicker.stop();
     this.gameTicker.stop();
     if (this.transitionTimer) clearTimeout(this.transitionTimer);
@@ -152,17 +187,65 @@ export class GameLoop {
     this.engine.destroy();
   }
 
+  // ── Opening Move when Student plays Black ────────────────────
+
+  private async _stockfishOpeningMove(): Promise<void> {
+    this.isBusy = true;
+    this.cb.onStatusMessage('Stockfish делает первый ход (1. e4)…', 'info');
+
+    try {
+      const thinkMs = Math.min(1500, Math.max(200, this.settings.stockfishElo / 3));
+      const result = await this.engine.getBestMove(this.game.fen(), thinkMs);
+
+      if (!result.bestMove || result.bestMove === '(none)') {
+        this._endGame('stalemate');
+        return;
+      }
+
+      const sfFrom = result.bestMove.substring(0, 2);
+      const sfTo   = result.bestMove.substring(2, 4);
+      const sfProm = result.bestMove.substring(4) || undefined;
+
+      try {
+        this.game.move({ from: sfFrom, to: sfTo, promotion: sfProm });
+      } catch {
+        this._endGame('stalemate');
+        return;
+      }
+
+      this.whiteMs += this.settings.incrementSeconds * 1000;
+
+      const newFen = this.game.fen();
+      const threatAnalysis = analyzeThreatsFull(newFen, this.studentColor);
+      this.cachedDests = threatAnalysis.dests;
+
+      this.cb.onStockfishMove({ from: sfFrom, to: sfTo, fen: newFen, dests: this.cachedDests });
+      this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
+
+      this._save();
+      this.transitionTimer = setTimeout(() => this._enterPhaseA(), 500);
+    } catch (e) {
+      console.error('Stockfish error on opening move:', e);
+      this.cb.onStatusMessage('Ошибка движка', 'error');
+    } finally {
+      this.isBusy = false;
+    }
+  }
+
   // ── Phase A: "Поиск шахов и взятий" ───────────────────────────
 
   private _enterPhaseA(existingMs?: number): void {
+    if (this.isGameOver) return;
+
     this.phase = 'search';
     this.found = this._emptyFound();
     this.gameTicker.stop();
     if (this.transitionTimer) clearTimeout(this.transitionTimer);
 
     const fen = this.game.fen();
-    this.threats = analyzeThreatsFull(fen, 'w');
-    this.cachedDests = getAllDests(fen);
+    const threatAnalysis = analyzeThreatsFull(fen, this.studentColor);
+    this.threats = threatAnalysis;
+    this.cachedDests = threatAnalysis.dests;
 
     this.totals = {
       myChecks:    this.threats.myChecks.length,
@@ -176,6 +259,9 @@ export class GameLoop {
       this.totals.oppChecks, this.totals.oppCaptures,
     );
     this.statsCollector.startSearchPhase();
+
+    this.searchRemaining = existingMs ?? (this.settings.searchTimerSeconds * 1000);
+    this.cb.onSearchTimerTick(this.searchRemaining);
 
     this.cb.onPhaseChange('search', fen, this.cachedDests);
     this.cb.onCountersUpdate({ ...this.found }, { ...this.totals });
@@ -191,23 +277,27 @@ export class GameLoop {
     }
 
     this.cb.onStatusMessage(`Найдите шахи и взятия (${totalThreats})`, 'info');
-    this.searchRemaining = existingMs ?? (this.settings.searchTimerSeconds * 1000);
 
+    let lastTick = Date.now();
     this.searchTicker.start(() => {
-      this.searchRemaining -= 100;
+      const now = Date.now();
+      const delta = now - lastTick;
+      lastTick = now;
+
+      this.searchRemaining = Math.max(0, this.searchRemaining - delta);
       this.cb.onSearchTimerTick(this.searchRemaining);
       if (this.searchRemaining <= 0) {
         this.searchTicker.stop();
         this.statsCollector.endSearchPhase();
         this._enterPhaseB();
       }
-    }, 100);
+    }, 150);
 
     this._save();
   }
 
   private _handleThreatClick(orig: string, dest: string): void {
-    if (!this.threats) return;
+    if (!this.threats || this.isGameOver) return;
     const key = getMoveKey(orig, dest);
     let found = false;
 
@@ -241,7 +331,7 @@ export class GameLoop {
         this.searchTicker.stop();
         this.statsCollector.endSearchPhase();
         this.cb.onStatusMessage('Отлично! Все угрозы найдены!', 'success');
-        this.transitionTimer = setTimeout(() => this._enterPhaseB(), 600);
+        this.transitionTimer = setTimeout(() => this._enterPhaseB(), 500);
       }
     }
   }
@@ -249,29 +339,50 @@ export class GameLoop {
   // ── Phase B: "Ваш ход" ────────────────────────────────────────
 
   private _enterPhaseB(): void {
+    if (this.isGameOver) return;
+
     this.searchTicker.stop();
     if (this.transitionTimer) clearTimeout(this.transitionTimer);
     this.phase = 'move';
 
     const fen = this.game.fen();
-    this.cachedDests = getAllDests(fen);
+    const threatAnalysis = analyzeThreatsFull(fen, this.studentColor);
+    this.cachedDests = threatAnalysis.dests;
 
     this.cb.onPhaseChange('move', fen, this.cachedDests);
     this.cb.onStatusMessage('Ваш ход', 'info');
 
+    let lastGameTick = Date.now();
     this.gameTicker.start(() => {
-      this.whiteMs -= 100;
-      this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
-      if (this.whiteMs <= 0) {
-        this.gameTicker.stop();
-        this._endGame('timeout', 'black');
+      const now = Date.now();
+      const delta = now - lastGameTick;
+      lastGameTick = now;
+
+      if (this.studentColor === 'w') {
+        this.whiteMs = Math.max(0, this.whiteMs - delta);
+        if (this.whiteMs <= 0) {
+          this.gameTicker.stop();
+          this._endGame('timeout', 'black');
+          return;
+        }
+      } else {
+        this.blackMs = Math.max(0, this.blackMs - delta);
+        if (this.blackMs <= 0) {
+          this.gameTicker.stop();
+          this._endGame('timeout', 'white');
+          return;
+        }
       }
-    }, 100);
+
+      this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
+    }, 200);
 
     this._save();
   }
 
   private async _handlePlayerMove(orig: string, dest: string): Promise<void> {
+    if (this.isBusy || this.isGameOver) return;
+
     const fenBeforePlayer = this.game.fen();
     let moveResult;
     try {
@@ -281,38 +392,46 @@ export class GameLoop {
     }
     if (!moveResult) return;
 
+    this.isBusy = true;
     this.gameTicker.stop();
-    this.whiteMs += this.settings.incrementSeconds * 1000;
 
-    // 1. Evaluate player move against Stockfish in fenBeforePlayer (when it was White's turn)
-    let winBefore = 50;
-    let isBestMove = false;
     try {
-      const evalRes = await this.engine.getBestMove(fenBeforePlayer, 250);
-      winBefore = cpToWinPercent(evalRes.score);
-      const sfBestMove = evalRes.bestMove.replace(/(..)(..).*/, '$1$2').toLowerCase();
-      const playerUci = `${orig}${dest}`.toLowerCase();
-      isBestMove = sfBestMove === playerUci;
-    } catch (e) {
-      console.warn('Pre-move evaluation error:', e);
-    }
+      // 1. Evaluate player move against Stockfish in fenBeforePlayer (student's turn)
+      let winBefore = 50;
+      let isBestMove = false;
+      try {
+        const evalRes = await this.engine.getBestMove(fenBeforePlayer, 250);
+        winBefore = cpToWinPercent(evalRes.score);
+        const sfBestMove = evalRes.bestMove.replace(/(..)(..).*/, '$1$2').toLowerCase();
+        const playerUci = `${orig}${dest}`.toLowerCase();
+        isBestMove = sfBestMove === playerUci;
+      } catch (e) {
+        console.warn('Pre-move evaluation error:', e);
+      }
 
-    if (this._checkGameOver()) {
-      const moveAcc = isBestMove ? 100 : 95;
-      this.statsCollector.recordPlayerMove(moveAcc, isBestMove);
-      return;
-    }
+      if (this._checkGameOver()) {
+        const moveAcc = isBestMove ? 100 : 95;
+        this.statsCollector.recordPlayerMove(moveAcc, isBestMove);
+        return;
+      }
 
-    this.cb.onStatusMessage('Stockfish думает…', 'info');
+      // Add increment to player's clock
+      if (this.studentColor === 'w') {
+        this.whiteMs += this.settings.incrementSeconds * 1000;
+      } else {
+        this.blackMs += this.settings.incrementSeconds * 1000;
+      }
+      this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
 
-    // 2. Get Stockfish's response move for the new position (Black's turn)
-    try {
+      this.cb.onStatusMessage('Stockfish думает…', 'info');
+
+      // 2. Get Stockfish's response move for the new position
       const thinkMs = Math.min(1500, Math.max(200, this.settings.stockfishElo / 3));
       const result = await this.engine.getBestMove(this.game.fen(), thinkMs);
 
-      // Score from Black's perspective → negate for White's perspective
-      const whiteScoreAfter = -result.score;
-      const winAfter = cpToWinPercent(whiteScoreAfter);
+      // Score from side-to-move (Stockfish) -> negate for student's perspective
+      const studentScoreAfter = -result.score;
+      const winAfter = cpToWinPercent(studentScoreAfter);
       const moveAccuracy = isBestMove ? 100 : calculateMoveAccuracy(winBefore, winAfter);
       this.statsCollector.recordPlayerMove(moveAccuracy, isBestMove);
 
@@ -332,13 +451,19 @@ export class GameLoop {
         return;
       }
 
-      this.blackMs += this.settings.incrementSeconds * 1000;
+      // Add increment to Stockfish's clock
+      if (this.studentColor === 'w') {
+        this.blackMs += this.settings.incrementSeconds * 1000;
+      } else {
+        this.whiteMs += this.settings.incrementSeconds * 1000;
+      }
+      this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
 
       const newFen = this.game.fen();
-      const newDests = getAllDests(newFen);
-      this.cachedDests = newDests;
+      const threatAnalysis = analyzeThreatsFull(newFen, this.studentColor);
+      this.cachedDests = threatAnalysis.dests;
 
-      this.cb.onStockfishMove({ from: sfFrom, to: sfTo, fen: newFen, dests: newDests });
+      this.cb.onStockfishMove({ from: sfFrom, to: sfTo, fen: newFen, dests: this.cachedDests });
 
       if (this._checkGameOver()) return;
 
@@ -347,6 +472,8 @@ export class GameLoop {
     } catch (e) {
       console.error('Stockfish error:', e);
       this.cb.onStatusMessage('Ошибка движка', 'error');
+    } finally {
+      this.isBusy = false;
     }
   }
 
@@ -363,7 +490,9 @@ export class GameLoop {
 
   private _checkGameOver(): boolean {
     if (this.game.isCheckmate()) {
-      this._endGame('checkmate', this.game.turn() === 'w' ? 'black' : 'white');
+      const loser = this.game.turn();
+      const winner = loser === 'w' ? 'black' : 'white';
+      this._endGame('checkmate', winner);
       return true;
     }
     if (this.game.isStalemate() || this.game.isDraw()) {
@@ -374,6 +503,7 @@ export class GameLoop {
   }
 
   private _endGame(reason: GameOverResult['reason'], winner?: 'white' | 'black' | 'draw'): void {
+    this.isGameOver = true;
     this.searchTicker.stop();
     this.gameTicker.stop();
     if (this.transitionTimer) clearTimeout(this.transitionTimer);
@@ -387,14 +517,22 @@ export class GameLoop {
     else if (winner === 'black') resultStr = '0-1';
     else if (winner === 'draw') resultStr = '1/2-1/2';
 
+    const whitePlayer = this.studentColor === 'w'
+      ? (this.settings.studentName || 'Ученик')
+      : `Stockfish (${this.settings.stockfishElo} Elo)`;
+
+    const blackPlayer = this.studentColor === 'b'
+      ? (this.settings.studentName || 'Ученик')
+      : `Stockfish (${this.settings.stockfishElo} Elo)`;
+
     try {
       this.game.header(
         'Event', 'Chess Game Vision Training',
         'Site', 'Chess Game Vision',
         'Date', dateStr,
         'Round', '1',
-        'White', this.settings.studentName || 'Ученик',
-        'Black', `Stockfish (${this.settings.stockfishElo} Elo)`,
+        'White', whitePlayer,
+        'Black', blackPlayer,
         'Result', resultStr
       );
     } catch {
@@ -404,6 +542,7 @@ export class GameLoop {
     this.cb.onGameOver({
       reason,
       winner,
+      studentColor: this.studentColor,
       stats: this.statsCollector.getStats(),
       pgn: this.game.pgn()
     });
@@ -414,20 +553,20 @@ export class GameLoop {
   }
 
   private _save(): void {
+    if (this.isGameOver) return;
     if (this.saveTimer) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
       persistence.saveGameState({
         fen: this.game.fen(),
         pgn: this.game.pgn(),
         phase: this.phase,
+        studentColor: this.studentColor,
         searchTimerRemaining: this.searchRemaining,
         whiteTimeRemaining: this.whiteMs,
         blackTimeRemaining: this.blackMs,
-        stats: createEmptyStats(),
+        stats: this.statsCollector.getStats(),
         moveNumber: this.game.moveNumber(),
       });
     }, 200);
   }
 }
-
-export { formatTime };

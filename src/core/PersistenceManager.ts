@@ -3,7 +3,7 @@
  */
 
 import type { GameState, GameSettings } from '../types/index.js';
-import { DEFAULT_SETTINGS } from '../types/index.js';
+import { DEFAULT_SETTINGS, DEFAULT_FORMSPREE_ENDPOINT } from '../types/index.js';
 
 const KEYS = {
   SETTINGS: 'cgv_settings',
@@ -23,7 +23,12 @@ export class PersistenceManager {
     try {
       const raw = localStorage.getItem(KEYS.SETTINGS);
       if (raw) {
-        return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+        const loaded = JSON.parse(raw);
+        return {
+          ...DEFAULT_SETTINGS,
+          ...loaded,
+          formspreeEndpoint: loaded.formspreeEndpoint || DEFAULT_FORMSPREE_ENDPOINT,
+        };
       }
     } catch { /* corrupt data */ }
     return { ...DEFAULT_SETTINGS };
@@ -40,17 +45,31 @@ export class PersistenceManager {
   loadGameState(): GameState | null {
     try {
       const raw = localStorage.getItem(KEYS.GAME_STATE);
-      if (raw) return JSON.parse(raw) as GameState;
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.fen === 'string' && typeof parsed.pgn === 'string') {
+          return parsed as GameState;
+        }
+      }
     } catch { /* corrupt */ }
     return null;
   }
 
   hasUnfinishedGame(): boolean {
-    return !!localStorage.getItem(KEYS.GAME_STATE);
+    try {
+      const raw = localStorage.getItem(KEYS.GAME_STATE);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      return Boolean(parsed && typeof parsed.fen === 'string');
+    } catch {
+      return false;
+    }
   }
 
   clearGameState(): void {
-    localStorage.removeItem(KEYS.GAME_STATE);
+    try {
+      localStorage.removeItem(KEYS.GAME_STATE);
+    } catch { /* ignore */ }
   }
 }
 
