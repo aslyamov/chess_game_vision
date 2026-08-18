@@ -37,9 +37,9 @@ function buildPgnWithVariations(basePgn: string, missed: MissedThreatsMap): stri
     movetext = basePgn.substring(headerEndIdx + 2).trim();
   }
 
-  // Tokenize movetext: move numbers, moves, result
-  // Tokens: "1.", "e4", "e5", "2.", "Nf3", "Nc6", ..., "1-0"
-  const tokens = movetext.match(/\S+/g) || [];
+  // Clean movetext of existing comments before tokenizing
+  const cleanMovetext = movetext.replace(/\{[^}]*\}/g, '').trim();
+  const tokens = cleanMovetext.match(/\S+/g) || [];
 
   // Build an ordered list of SAN moves (half-moves) from tokens
   const sanMoves: string[] = [];

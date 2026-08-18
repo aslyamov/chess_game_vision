@@ -85,6 +85,7 @@ export interface GameState {
   blackTimeRemaining: number;     // ms
   stats: GameStats;
   moveNumber: number;
+  missedThreats?: [number, MissedThreat[]][];
 }
 
 // ── Stats ─────────────────────────────────────────────────────

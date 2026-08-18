@@ -131,6 +131,9 @@ export class GameLoop {
     this.whiteMs = state.whiteTimeRemaining;
     this.blackMs = state.blackTimeRemaining;
     this.statsCollector.restoreStats(state.stats);
+    this.missedThreatsMap = state.missedThreats && Array.isArray(state.missedThreats)
+      ? new Map(state.missedThreats)
+      : new Map();
 
     this.cb.onGameInit?.(this.studentColor);
     this.cb.onGameTimerTick(this.whiteMs, this.blackMs);
@@ -219,7 +222,7 @@ export class GameLoop {
 
   private async _stockfishOpeningMove(): Promise<void> {
     this.isBusy = true;
-    this.cb.onStatusMessage('Stockfish делает первый ход (1. e4)…', 'info');
+    this.cb.onStatusMessage('Stockfish делает первый ход…', 'info');
 
     try {
       const result = await this.engine.getBotMove(this.game.fen());
@@ -610,6 +613,7 @@ export class GameLoop {
         blackTimeRemaining: this.blackMs,
         stats: this.statsCollector.getStats(),
         moveNumber: this.game.moveNumber(),
+        missedThreats: Array.from(this.missedThreatsMap.entries()),
       });
     }, 200);
   }
