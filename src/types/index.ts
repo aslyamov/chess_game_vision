@@ -38,14 +38,14 @@ export interface BotLevelConfig {
 }
 
 export const BOT_LEVELS: Record<number, BotLevelConfig> = {
-  1: { level: 1, name: 'Уровень 1', approxElo: 800,  skillLevel: 0,  depth: 1,  movetimeMs: 50 },
-  2: { level: 2, name: 'Уровень 2', approxElo: 1100, skillLevel: 3,  depth: 2,  movetimeMs: 100 },
-  3: { level: 3, name: 'Уровень 3', approxElo: 1400, skillLevel: 6,  depth: 3,  movetimeMs: 150 },
-  4: { level: 4, name: 'Уровень 4', approxElo: 1700, skillLevel: 8,  depth: 4,  movetimeMs: 200 },
-  5: { level: 5, name: 'Уровень 5', approxElo: 2000, skillLevel: 11, depth: 6,  movetimeMs: 300 },
-  6: { level: 6, name: 'Уровень 6', approxElo: 2300, skillLevel: 14, depth: 8,  movetimeMs: 400 },
-  7: { level: 7, name: 'Уровень 7', approxElo: 2500, skillLevel: 17, depth: 10, movetimeMs: 500 },
-  8: { level: 8, name: 'Уровень 8', approxElo: 2800, skillLevel: 20, depth: 15, movetimeMs: 1000 },
+  1: { level: 1, name: 'Уровень 1', approxElo: 800,  skillLevel: -9, depth: 5,  movetimeMs: 50 },
+  2: { level: 2, name: 'Уровень 2', approxElo: 1100, skillLevel: -5, depth: 5,  movetimeMs: 100 },
+  3: { level: 3, name: 'Уровень 3', approxElo: 1400, skillLevel: -1, depth: 5,  movetimeMs: 150 },
+  4: { level: 4, name: 'Уровень 4', approxElo: 1500, skillLevel: 3,  depth: 5,  movetimeMs: 200 },
+  5: { level: 5, name: 'Уровень 5', approxElo: 1700, skillLevel: 7,  depth: 5,  movetimeMs: 300 },
+  6: { level: 6, name: 'Уровень 6', approxElo: 2000, skillLevel: 11, depth: 8,  movetimeMs: 400 },
+  7: { level: 7, name: 'Уровень 7', approxElo: 2300, skillLevel: 15, depth: 13, movetimeMs: 500 },
+  8: { level: 8, name: 'Уровень 8', approxElo: 2800, skillLevel: 20, depth: 22, movetimeMs: 1000 },
 };
 
 export function getBotLevelConfig(level: number): BotLevelConfig {

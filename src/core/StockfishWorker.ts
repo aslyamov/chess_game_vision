@@ -1,78 +1,85 @@
 /**
- * StockfishWorker — Promise-based wrapper over stockfish WebWorker.
- * Handles initialization, skill level, move requests, and evaluation.
+ * StockfishWorker — Promise-based wrapper over Fairy-Stockfish WASM.
+ * Uses the fairy-stockfish-nnue.wasm package which provides Stockfish()
+ * factory with addMessageListener/postMessage API (not plain Worker).
+ * Supports negative Skill Level values (Lichess-style).
  */
 
 import type { GameSettings, StockfishResult } from '../types/index.js';
 import { getBotLevelConfig } from '../types/index.js';
 
+// Fairy-Stockfish instance interface (from the WASM module)
+interface FairyStockfishInstance {
+  addMessageListener(fn: (line: string) => void): void;
+  removeMessageListener(fn: (line: string) => void): void;
+  postMessage(cmd: string): void;
+  terminate(): void;
+}
+
+// The Stockfish() factory function type
+type StockfishFactory = (opts?: Record<string, unknown>) => Promise<FairyStockfishInstance>;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var Stockfish: StockfishFactory | undefined;
+}
+
 export class StockfishEngine {
-  private worker: Worker | null = null;
+  private sf: FairyStockfishInstance | null = null;
   private ready = false;
   private pendingResolve: ((r: StockfishResult) => void) | null = null;
   private pendingReject: ((e: Error) => void) | null = null;
   private pendingTimeout: ReturnType<typeof setTimeout> | null = null;
   private currentLevel = 3;
   private lastScoreCp = 0;
+  private initPromise: Promise<void>;
 
   constructor() {
-    this._init();
+    this.initPromise = this._init();
   }
 
-  private _init(): void {
+  private async _init(): Promise<void> {
     const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
-    const candidatePaths = [
-      `${base}/stockfish/stockfish-18-lite-single.js`,
-      `${base}/stockfish/stockfish-18-lite.js`,
-      `${base}/stockfish/stockfish-18-asm.js`,
-    ];
 
-    for (const p of candidatePaths) {
-      try {
-        this.worker = new Worker(p);
-        break;
-      } catch {
-        // try next
+    try {
+      // Load Fairy-Stockfish script via <script> tag so it registers
+      // the global Stockfish factory (required for pthread worker spawning).
+      await this._loadScript(`${base}/stockfish/fairy-stockfish.js`);
+
+      const factory = globalThis.Stockfish;
+      if (!factory) {
+        throw new Error('Stockfish factory not found after script load');
       }
+
+      this.sf = await factory();
+
+      this.sf.addMessageListener((line: string) => this._onMessage(line));
+
+      // Send UCI init
+      this.sf.postMessage('uci');
+    } catch (err) {
+      console.error('Fairy-Stockfish failed to initialize:', err);
     }
-
-    if (!this.worker) {
-      console.error('Stockfish worker failed to initialize');
-      return;
-    }
-
-    this.worker.onmessage = (e: MessageEvent) => this._onMessage(e.data);
-    this.worker.onerror = (e: ErrorEvent) => {
-      console.error('Stockfish error:', e);
-      this._cleanupPending(new Error(e.message || 'Stockfish worker error'));
-    };
-
-    this._send('uci');
   }
 
-  private _send(cmd: string): void {
-    this.worker?.postMessage(cmd);
-  }
-
-  private _cleanupPending(err?: Error, result?: StockfishResult): void {
-    if (this.pendingTimeout) {
-      clearTimeout(this.pendingTimeout);
-      this.pendingTimeout = null;
-    }
-    if (result && this.pendingResolve) {
-      this.pendingResolve(result);
-    } else if (err && this.pendingReject) {
-      this.pendingReject(err);
-    }
-    this.pendingResolve = null;
-    this.pendingReject = null;
+  /**
+   * Load a script via <script> tag and wait for it to finish.
+   */
+  private _loadScript(url: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = url;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Failed to load script: ${url}`));
+      document.head.appendChild(script);
+    });
   }
 
   private _onMessage(data: string): void {
     if (data === 'uciok') {
       this.ready = true;
       this._applyLevel(this.currentLevel);
-      this._send('isready');
+      this.sf?.postMessage('isready');
       return;
     }
 
@@ -104,10 +111,26 @@ export class StockfishEngine {
     }
   }
 
+  private _cleanupPending(err?: Error, result?: StockfishResult): void {
+    if (this.pendingTimeout) {
+      clearTimeout(this.pendingTimeout);
+      this.pendingTimeout = null;
+    }
+    if (result && this.pendingResolve) {
+      this.pendingResolve(result);
+    } else if (err && this.pendingReject) {
+      this.pendingReject(err);
+    }
+    this.pendingResolve = null;
+    this.pendingReject = null;
+  }
+
   private _applyLevel(level: number): void {
     const cfg = getBotLevelConfig(level);
-    this._send('setoption name UCI_LimitStrength value false');
-    this._send(`setoption name Skill Level value ${cfg.skillLevel}`);
+    // Fairy-Stockfish supports negative Skill Level (unlike standard Stockfish).
+    // This matches Lichess fishnet configuration exactly.
+    this.sf?.postMessage('setoption name UCI_LimitStrength value false');
+    this.sf?.postMessage(`setoption name Skill Level value ${cfg.skillLevel}`);
   }
 
   private setLevel(level: number): void {
@@ -141,40 +164,43 @@ export class StockfishEngine {
    */
   searchMove(fen: string, options?: { depth?: number; movetimeMs?: number }): Promise<StockfishResult> {
     return new Promise((resolve, reject) => {
-      if (!this.worker) {
-        reject(new Error('Stockfish not available'));
-        return;
-      }
+      // Wait for init to complete
+      this.initPromise.then(() => {
+        if (!this.sf) {
+          reject(new Error('Fairy-Stockfish not available'));
+          return;
+        }
 
-      // Reject previous pending request if new one arrives
-      if (this.pendingReject) {
-        this._cleanupPending(new Error('Cancelled by subsequent request'));
-      }
+        // Reject previous pending request if new one arrives
+        if (this.pendingReject) {
+          this._cleanupPending(new Error('Cancelled by subsequent request'));
+        }
 
-      this.pendingResolve = resolve;
-      this.pendingReject = reject;
-      this.lastScoreCp = 0;
+        this.pendingResolve = resolve;
+        this.pendingReject = reject;
+        this.lastScoreCp = 0;
 
-      const movetime = options?.movetimeMs ?? 200;
-      const depth = options?.depth;
+        const movetime = options?.movetimeMs ?? 200;
+        const depth = options?.depth;
 
-      this.pendingTimeout = setTimeout(() => {
-        this._cleanupPending(new Error('Stockfish evaluation timed out'));
-      }, Math.max(movetime, 500) + 6000);
+        this.pendingTimeout = setTimeout(() => {
+          this._cleanupPending(new Error('Stockfish evaluation timed out'));
+        }, Math.max(movetime, 500) + 6000);
 
-      this._send(`position fen ${fen}`);
-      if (depth !== undefined && depth > 0) {
-        this._send(`go depth ${depth} movetime ${movetime}`);
-      } else {
-        this._send(`go movetime ${movetime}`);
-      }
+        this.sf!.postMessage(`position fen ${fen}`);
+        if (depth !== undefined && depth > 0) {
+          this.sf!.postMessage(`go depth ${depth} movetime ${movetime}`);
+        } else {
+          this.sf!.postMessage(`go movetime ${movetime}`);
+        }
+      }).catch(reject);
     });
   }
 
   destroy(): void {
     this._cleanupPending(new Error('Stockfish destroyed'));
-    this.worker?.terminate();
-    this.worker = null;
+    this.sf?.terminate();
+    this.sf = null;
     this.ready = false;
   }
 }

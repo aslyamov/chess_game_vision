@@ -9,7 +9,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    exclude: ['stockfish'],
+    exclude: ['fairy-stockfish-nnue.wasm'],
   },
   server: {
     headers: {
