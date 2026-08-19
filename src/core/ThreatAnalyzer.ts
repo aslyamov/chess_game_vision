@@ -124,7 +124,10 @@ function getMovesForColor(
       };
 
       // Capture: flag 'c' (capture) or 'e' (en passant) or captured property
-      if (m.flags.includes('c') || m.flags.includes('e') || m.captured) {
+      // Exclude king captures — in real chess the king can never be captured,
+      // only checked. When FEN turn is flipped for analysis, chess.js may
+      // generate king captures which are not real threats.
+      if ((m.flags.includes('c') || m.flags.includes('e') || m.captured) && m.captured !== 'k') {
         captures.push(threat);
       }
 
