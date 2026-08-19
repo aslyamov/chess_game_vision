@@ -40,11 +40,7 @@ if (typeof window === "undefined") {
           }
 
           const newHeaders = new Headers(response.headers);
-          newHeaders.set("Cross-Origin-Embedder-Policy",
-            (self.coepCredentialless && coepCredentialless())
-              ? "credentialless"
-              : "require-corp"
-          );
+          newHeaders.set("Cross-Origin-Embedder-Policy", "require-corp");
           newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
 
           return new Response(response.body, {
@@ -53,7 +49,10 @@ if (typeof window === "undefined") {
             headers: newHeaders,
           });
         })
-        .catch((e) => console.error(e))
+        .catch((e) => {
+          console.error(e);
+          return new Response("Service Worker fetch error", { status: 500 });
+        })
     );
   });
 } else {
@@ -65,8 +64,7 @@ if (typeof window === "undefined") {
     const coiConfig = {
       shouldRegister: () => true,
       shouldDeregister: () => false,
-      coepCredentialless: () => (window.coepCredentialless !== undefined ? window.coepCredentialless : false),
-      doReload: () => (window.coiDoReload !== undefined ? window.coiDoReload : !reloadedByCOI),
+      doReload: () => !reloadedByCOI,
       quiet: false,
       ...window.coi,
     };
@@ -103,7 +101,6 @@ if (typeof window === "undefined") {
       return;
     }
 
-    // Determine service worker URL relative to current page
     if (!navigator.serviceWorker) {
       console.error(
         "COOP/COEP: Service workers are not supported. SharedArrayBuffer will not work."
@@ -149,10 +146,4 @@ if (typeof window === "undefined") {
         }
       );
   })();
-}
-
-function coepCredentialless() {
-  const ifr = document.createElement("iframe");
-  ifr.setAttribute("credentialless", "");
-  return ifr.credentialless === true;
 }
